@@ -1,0 +1,100 @@
+.card-forge-view {
+	--card-forge-card-padding: var(--size-4-4);
+	padding: var(--size-4-5);
+}
+
+.card-forge-view__header h2 {
+	margin-block: 0 var(--size-4-1);
+}
+
+.card-forge-view__subtitle {
+	margin-block: 0 var(--size-4-5);
+	color: var(--text-muted);
+}
+
+.card-forge-view__toolbar {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-3);
+	margin-block-end: var(--size-4-4);
+}
+
+.card-forge-view__search {
+	flex: 1 1 20rem;
+	min-width: 8rem;
+}
+
+.card-forge-view__count {
+	flex: 0 0 auto;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.card-forge-results {
+	display: grid;
+	gap: var(--size-4-3);
+}
+
+.card-forge-result {
+	padding: var(--card-forge-card-padding);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-primary-alt);
+}
+
+.card-forge-result__title {
+	display: inline-flex;
+	height: auto;
+	max-width: 100%;
+	padding: 0;
+	color: var(--text-normal);
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-semibold);
+	text-align: start;
+	white-space: normal;
+}
+
+.card-forge-result__title:hover {
+	color: var(--text-accent-hover);
+	background: transparent;
+}
+
+.card-forge-result__detail {
+	margin-block-start: var(--size-4-2);
+	color: var(--text-muted);
+	line-height: var(--line-height-tight);
+}
+
+.card-forge-result__metadata {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+	margin-block-start: var(--size-4-3);
+}
+
+.card-forge-result__metadata span {
+	padding: 2px var(--size-4-2);
+	border-radius: var(--radius-s);
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.card-forge-results__empty {
+	padding: var(--size-4-8) var(--size-4-4);
+	border: 1px dashed var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	color: var(--text-muted);
+	text-align: center;
+}
+
+@media (max-width: 500px) {
+	.card-forge-view {
+		padding: var(--size-4-3);
+	}
+
+	.card-forge-view__toolbar {
+		align-items: stretch;
+		flex-direction: column;
+	}
+}

@@ -1,0 +1,15 @@
+node_modules/
+main.js
+dev.config.json
+data.json
+.obsidian/
+.idea/
+.vscode/
+.env
+.env.*
+coverage/
+.eslintcache
+.DS_Store
+*.log
+*.tmp
+*.temp
