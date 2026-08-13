@@ -1,15 +1,25 @@
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 
 import type { ItemCardData } from '../models/item';
+import { ItemCardRenderer, type RenderedItemCard } from '../renderer/item-card-renderer';
+import { formatLayoutName } from '../renderer/item-card-layout';
+import { getArtworkResourcePath } from '../services/artwork-resolver';
 import type { ItemIndex } from '../services/item-index';
 
 export const CARD_FORGE_VIEW_TYPE = 'ttrpg-card-forge-view';
 
 export class CardForgeView extends ItemView {
+	private readonly cardRenderer = new ItemCardRenderer();
 	private searchInput: HTMLInputElement | null = null;
-	private countElement: HTMLElement | null = null;
+	private totalCountElement: HTMLElement | null = null;
+	private filteredCountElement: HTMLElement | null = null;
 	private resultsElement: HTMLElement | null = null;
+	private cardHostElement: HTMLElement | null = null;
+	private diagnosticsElement: HTMLElement | null = null;
+	private openSourceButton: HTMLButtonElement | null = null;
+	private selectedFilePath: string | null = null;
 	private unsubscribeFromIndex: (() => void) | null = null;
+	private overflowFrame: number | null = null;
 
 	constructor(leaf: WorkspaceLeaf, private readonly itemIndex: ItemIndex) {
 		super(leaf);
@@ -34,55 +44,112 @@ export class CardForgeView extends ItemView {
 		}
 
 		container.empty();
-		container.addClass('card-forge-view');
+		container.addClass('ttrpg-card-forge');
 
-		const header = container.createDiv({ cls: 'card-forge-view__header' });
-		header.createEl('h2', { text: 'TTRPG Card Forge' });
-		header.createEl('p', {
-			text: 'Browse structured item notes indexed from your vault.',
-			cls: 'card-forge-view__subtitle',
+		const header = container.createDiv({ cls: 'ttrpg-card-forge__header' });
+		const headingGroup = header.createDiv({ cls: 'ttrpg-card-forge__heading-group' });
+		headingGroup.createEl('h2', {
+			text: 'TTRPG Card Forge',
+			cls: 'ttrpg-card-forge__heading',
 		});
+		headingGroup.createDiv({
+			text: 'Item card rendering preview',
+			cls: 'ttrpg-card-forge__subtitle',
+		});
+		this.totalCountElement = header.createDiv({ cls: 'ttrpg-card-forge__total-count' });
 
-		const toolbar = container.createDiv({ cls: 'card-forge-view__toolbar' });
-		this.searchInput = toolbar.createEl('input', {
+		const workspace = container.createDiv({ cls: 'ttrpg-card-forge__workspace' });
+		const browser = workspace.createEl('section', {
+			cls: 'ttrpg-card-forge__browser',
+			attr: { 'aria-label': 'Item browser' },
+		});
+		const browserToolbar = browser.createDiv({ cls: 'ttrpg-card-forge__browser-toolbar' });
+		this.searchInput = browserToolbar.createEl('input', {
 			type: 'search',
 			placeholder: 'Search items…',
-			cls: 'card-forge-view__search',
+			cls: 'ttrpg-card-forge__search',
 			attr: { 'aria-label': 'Search indexed items' },
 		});
-		this.countElement = toolbar.createDiv({ cls: 'card-forge-view__count' });
-		this.resultsElement = container.createDiv({ cls: 'card-forge-results' });
+		this.filteredCountElement = browserToolbar.createDiv({
+			cls: 'ttrpg-card-forge__filtered-count',
+		});
+		this.resultsElement = browser.createDiv({
+			cls: 'ttrpg-card-forge__results',
+			attr: { role: 'listbox', 'aria-label': 'Indexed items' },
+		});
 
-		this.registerDomEvent(this.searchInput, 'input', () => this.renderResults());
-		this.unsubscribeFromIndex = this.itemIndex.subscribe(() => this.renderResults());
-		this.renderResults();
+		const preview = workspace.createEl('section', {
+			cls: 'ttrpg-card-forge__preview',
+			attr: { 'aria-label': 'Card preview' },
+		});
+		preview.createEl('h3', {
+			text: 'Card preview',
+			cls: 'ttrpg-card-forge__preview-heading',
+		});
+		this.cardHostElement = preview.createDiv({ cls: 'ttrpg-card-forge__card-host' });
+		this.diagnosticsElement = preview.createDiv({ cls: 'ttrpg-card-forge__diagnostics' });
+		this.openSourceButton = preview.createEl('button', {
+			text: 'Open source note',
+			cls: 'ttrpg-card-forge__open-source',
+			attr: { type: 'button' },
+		});
+
+		this.registerDomEvent(this.searchInput, 'input', () => this.render());
+		this.registerDomEvent(this.openSourceButton, 'click', () => this.openSelectedItem());
+		this.unsubscribeFromIndex = this.itemIndex.subscribe(() => this.render());
+		this.render();
 	}
 
 	async onClose(): Promise<void> {
 		this.unsubscribeFromIndex?.();
 		this.unsubscribeFromIndex = null;
+		if (this.overflowFrame !== null) {
+			window.cancelAnimationFrame(this.overflowFrame);
+			this.overflowFrame = null;
+		}
+		this.containerEl.children[1]?.removeClass('ttrpg-card-forge');
 		this.searchInput = null;
-		this.countElement = null;
+		this.totalCountElement = null;
+		this.filteredCountElement = null;
 		this.resultsElement = null;
+		this.cardHostElement = null;
+		this.diagnosticsElement = null;
+		this.openSourceButton = null;
 	}
 
-	private renderResults(): void {
-		if (!this.resultsElement || !this.countElement) {
+	private render(): void {
+		if (!this.resultsElement || !this.totalCountElement || !this.filteredCountElement) {
 			return;
 		}
 
-		const query = this.searchInput?.value.trim().toLocaleLowerCase() ?? '';
 		const allItems = this.itemIndex.getItems();
-		const items = query.length === 0
+		const query = this.searchInput?.value.trim().toLocaleLowerCase() ?? '';
+		const visibleItems = query.length === 0
 			? allItems
 			: allItems.filter((item) => isSearchMatch(item, query));
 
-		this.countElement.setText(formatItemCount(items.length, allItems.length, query));
-		this.resultsElement.empty();
+		this.totalCountElement.setText(formatItemCount(allItems.length));
+		this.filteredCountElement.setText(query.length > 0
+			? `${visibleItems.length} results`
+			: formatItemCount(visibleItems.length));
 
+		if (!visibleItems.some((item) => item.filePath === this.selectedFilePath)) {
+			this.selectedFilePath = visibleItems[0]?.filePath ?? null;
+		}
+
+		this.renderItemList(visibleItems, query);
+		this.renderPreview();
+	}
+
+	private renderItemList(items: readonly ItemCardData[], query: string): void {
+		if (!this.resultsElement) {
+			return;
+		}
+
+		this.resultsElement.empty();
 		if (items.length === 0) {
 			this.resultsElement.createDiv({
-				cls: 'card-forge-results__empty',
+				cls: 'ttrpg-card-forge__empty',
 				text: query.length > 0
 					? 'No indexed items match this search.'
 					: 'No items are indexed. Check the item folder in settings, then rebuild the index.',
@@ -91,42 +158,119 @@ export class CardForgeView extends ItemView {
 		}
 
 		for (const item of items) {
-			this.renderItem(item);
+			const isSelected = item.filePath === this.selectedFilePath;
+			const result = this.resultsElement.createEl('button', {
+				cls: `ttrpg-card-forge__result${isSelected ? ' is-selected' : ''}`,
+				attr: {
+					type: 'button',
+					role: 'option',
+					'aria-selected': isSelected ? 'true' : 'false',
+				},
+			});
+			result.dataset.filePath = item.filePath;
+			result.createDiv({ text: item.name, cls: 'ttrpg-card-forge__result-name' });
+
+			const resultMetadata = result.createDiv({ cls: 'ttrpg-card-forge__result-metadata' });
+			if (item.rarity) {
+				resultMetadata.createSpan({ text: humanizeSlug(item.rarity) });
+			}
+			if (item.source) {
+				resultMetadata.createSpan({ text: item.source.toLocaleUpperCase() });
+			}
+
+			result.addEventListener('click', () => this.selectItem(item.filePath));
+			result.addEventListener('dblclick', () => this.openItem(item));
 		}
 	}
 
-	private renderItem(item: ItemCardData): void {
-		if (!this.resultsElement) {
+	private selectItem(filePath: string): void {
+		if (this.selectedFilePath === filePath) {
+			return;
+		}
+		this.selectedFilePath = filePath;
+		if (this.resultsElement) {
+			for (const child of Array.from(this.resultsElement.children)) {
+				if (!child.instanceOf(HTMLButtonElement)) {
+					continue;
+				}
+				const isSelected = child.dataset.filePath === filePath;
+				child.toggleClass('is-selected', isSelected);
+				child.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+			}
+		}
+		this.renderPreview();
+	}
+
+	private renderPreview(): void {
+		if (!this.cardHostElement || !this.diagnosticsElement || !this.openSourceButton) {
 			return;
 		}
 
-		const result = this.resultsElement.createDiv({ cls: 'card-forge-result' });
-		const title = result.createEl('button', {
-			text: item.name,
-			cls: 'card-forge-result__title clickable-icon',
-			attr: {
-				type: 'button',
-				'aria-label': `Open ${item.name}`,
-			},
-		});
-		this.registerDomEvent(title, 'click', () => {
-			void this.app.workspace.openLinkText(item.filePath, '', false);
-		});
-
-		if (item.detail) {
-			result.createDiv({ text: item.detail, cls: 'card-forge-result__detail' });
+		if (this.overflowFrame !== null) {
+			window.cancelAnimationFrame(this.overflowFrame);
+			this.overflowFrame = null;
 		}
 
-		const metadata = result.createDiv({ cls: 'card-forge-result__metadata' });
-		if (item.rarity) {
-			metadata.createSpan({ text: humanizeSlug(item.rarity) });
+		const selectedItem = this.itemIndex.getItems()
+			.find((item) => item.filePath === this.selectedFilePath);
+		this.cardHostElement.empty();
+		this.diagnosticsElement.empty();
+		this.openSourceButton.toggleAttribute('disabled', !selectedItem);
+
+		if (!selectedItem) {
+			this.cardHostElement.createDiv({
+				cls: 'ttrpg-card-forge__preview-empty',
+				text: 'Select an item to preview its card.',
+			});
+			return;
 		}
-		if (item.source) {
-			metadata.createSpan({ text: item.source.toLocaleUpperCase() });
+
+		const artworkResourcePath = getArtworkResourcePath(this.app, selectedItem);
+		const renderedCard = this.cardRenderer.render(
+			this.cardHostElement,
+			selectedItem,
+			artworkResourcePath,
+		);
+		this.renderDiagnostics(selectedItem, renderedCard, artworkResourcePath);
+	}
+
+	private renderDiagnostics(
+		item: ItemCardData,
+		renderedCard: RenderedItemCard,
+		artworkResourcePath?: string,
+	): void {
+		if (!this.diagnosticsElement) {
+			return;
 		}
-		if (item.attunement) {
-			metadata.createSpan({ text: 'Requires attunement' });
+
+		const layoutElement = this.diagnosticsElement.createSpan({
+			text: `Layout: ${formatLayoutName(renderedCard.layout)}`,
+		});
+		if (item.imagePath && !artworkResourcePath) {
+			this.diagnosticsElement.createSpan({ text: 'Artwork unavailable' });
+		} else if (!item.imagePath) {
+			this.diagnosticsElement.createSpan({ text: 'No artwork' });
 		}
+
+		this.overflowFrame = window.requestAnimationFrame(() => {
+			this.overflowFrame = null;
+			if (renderedCard.hasOverflow()) {
+				layoutElement.addClass('is-warning');
+				layoutElement.setText(`Layout: ${formatLayoutName(renderedCard.layout)} · Content needs fitting`);
+			}
+		});
+	}
+
+	private openSelectedItem(): void {
+		const item = this.itemIndex.getItems()
+			.find((candidate) => candidate.filePath === this.selectedFilePath);
+		if (item) {
+			this.openItem(item);
+		}
+	}
+
+	private openItem(item: ItemCardData): void {
+		void this.app.workspace.openLinkText(item.filePath, '', false);
 	}
 }
 
@@ -136,16 +280,15 @@ function isSearchMatch(item: ItemCardData, query: string): boolean {
 		.some((value) => value.toLocaleLowerCase().includes(query));
 }
 
-function formatItemCount(visible: number, total: number, query: string): string {
-	if (query.length > 0) {
-		return `${visible} of ${total} items`;
-	}
-	return `${total} ${total === 1 ? 'item' : 'items'}`;
+function formatItemCount(count: number): string {
+	return `${count} ${count === 1 ? 'item' : 'items'}`;
 }
 
 function humanizeSlug(value: string): string {
 	return value
 		.split('-')
-		.map((part) => part.length > 0 ? `${part[0]?.toLocaleUpperCase()}${part.slice(1)}` : part)
+		.map((part) => part.length > 0
+			? `${part[0]?.toLocaleUpperCase()}${part.slice(1)}`
+			: part)
 		.join(' ');
 }

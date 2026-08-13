@@ -7,6 +7,11 @@ import {
 	parseItemFrontmatter,
 	parseLinkedList,
 } from '../src/parsers/item-parser';
+import {
+	parseItemDescription,
+	stripMarkdownLinks,
+} from '../src/parsers/item-description-parser';
+import { isSupportedArtworkPath } from '../src/services/artwork-resolver';
 
 const exampleFrontmatter = {
 	cssclasses: ['json5e-item'],
@@ -20,7 +25,7 @@ const exampleFrontmatter = {
 	itemProp: '[Finesse](finesse.md), [Light](light.md)',
 	itemWeight: 3,
 	itemMastery: '[Nick](nick.md)',
-	itemDetail: 'Weapon (scimitar), very rare (requires attunement)',
+	itemDetail: 'Weapon ([scimitar](scimitar.md)), very rare (requires attunement)',
 	image: '/2.%20Mechanics/items/img/scimitar-of-speed.webp',
 };
 
@@ -39,8 +44,10 @@ void test('normalizes the requested item fields and derived tags', () => {
 	assert.deepEqual(item, {
 		filePath: '2. Mechanics/items/scimitar-of-speed.md',
 		name: 'Scimitar of Speed',
+		description: '',
 		detail: 'Weapon (scimitar), very rare (requires attunement)',
 		imagePath: '2. Mechanics/items/img/scimitar-of-speed.webp',
+		hasImage: false,
 		rarity: 'very-rare',
 		attunement: true,
 		source: 'xdmg',
@@ -72,8 +79,71 @@ void test('falls back to the filename and tolerates incomplete metadata', () => 
 
 void test('normalizes encoded paths and linked property lists', () => {
 	assert.equal(
-		normalizeVaultPath('\\2.%20Mechanics\\items\\img\\item.webp'),
+		normalizeVaultPath('\\2.%20Mechanics\\items\\img\\item.webp#right'),
 		'2. Mechanics/items/img/item.webp',
 	);
 	assert.deepEqual(parseLinkedList(['[Finesse](a.md)', 'Light']), ['Finesse', 'Light']);
+	assert.equal(isSupportedArtworkPath('/items/img/item.JPEG#right'), true);
+	assert.equal(isSupportedArtworkPath('/items/img/item.svg'), false);
+});
+
+void test('strips CLI boilerplate and retains only item rules prose', () => {
+	const markdown = `---
+name: Scimitar of Speed
+---
+# Scimitar of Speed
+*Weapon ([scimitar](scimitar.md)), very rare (requires attunement)*
+
+![](/2.%20Mechanics/items/img/scimitar-of-speed.webp#right)
+
+- **Damage**: 1d6 slashing
+- **Properties**: [Finesse](finesse.md), [Light](light.md)
+- **Mastery**: [Nick](nick.md)
+- **Weight**: 3.0 lb.
+
+You gain a +2 bonus to **attack rolls** and damage rolls made with this magic weapon.
+
+In addition, you can make one attack with it as a [Bonus Action](/2.%20Mechanics/rules/bonus-action.md) on each of your turns.
+
+*Source: Dungeon Master's Guide (2024) p. 302*`;
+
+	assert.deepEqual(
+		parseItemDescription(
+			markdown,
+			'Weapon ([scimitar](scimitar.md)), very rare (requires attunement)',
+		),
+		{
+			description: 'You gain a +2 bonus to **attack rolls** and damage rolls made with this magic weapon.\n\nIn addition, you can make one attack with it as a Bonus Action on each of your turns.',
+			sourceText: "Dungeon Master's Guide (2024) p. 302",
+		},
+	);
+});
+
+void test('preserves legitimate rules bullet and numbered lists', () => {
+	const markdown = `# Clockwork Charm
+*Wondrous item, uncommon*
+
+Choose one benefit:
+
+- Gain **advantage** on the check.
+- Add \`1d4\` to the result.
+
+Then resolve these steps:
+
+1. Roll the die.
+2. Apply the result.`;
+
+	assert.equal(
+		parseItemDescription(markdown, 'Wondrous item, uncommon').description,
+		'Choose one benefit:\n\n- Gain **advantage** on the check.\n- Add `1d4` to the result.\n\nThen resolve these steps:\n\n1. Roll the die.\n2. Apply the result.',
+	);
+});
+
+void test('converts Markdown and wiki links to visible text without exposing destinations', () => {
+	assert.equal(
+		stripMarkdownLinks(
+			'Use [Bonus Action](/2.%20Mechanics/rules/action-(bonus).md) with [[rules/reaction.md|Reaction]].',
+		),
+		'Use Bonus Action with Reaction.',
+	);
 });

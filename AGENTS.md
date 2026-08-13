@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TTRPG Card Forge is an Obsidian desktop plugin that will generate printable TTRPG cards from structured Markdown in a user's vault. Phase 1 indexes TTRPG CLI/5etools-style item frontmatter and exposes a searchable browser. Card layout and PDF generation are future work.
+TTRPG Card Forge is an Obsidian desktop plugin that will generate printable TTRPG cards from structured Markdown in a user's vault. Phase 1 indexes TTRPG CLI/5etools-style item frontmatter. Phase 2 parses item rules text, resolves local artwork, and renders a live item-card preview. PDF generation remains future work.
 
 The plugin ID is permanently `ttrpg-card-forge`. Do not rename it.
 
@@ -11,7 +11,8 @@ The plugin ID is permanently `ttrpg-card-forge`. Do not rename it.
 - `src/main.ts`: plugin lifecycle, commands, ribbon action, view registration, and event wiring.
 - `src/models/`: normalized domain models shared by parsers, services, and future renderers.
 - `src/parsers/`: pure parsing and normalization. Keep these modules independent of UI and rendering.
-- `src/services/`: Obsidian vault and metadata-cache integration. `item-index.ts` owns item discovery.
+- `src/renderer/`: adaptive layout selection, safe Markdown-to-DOM rendering, and reusable item-card rendering. Renderers consume normalized models only.
+- `src/services/`: Obsidian vault and metadata-cache integration. `item-index.ts` owns item discovery; `artwork-resolver.ts` resolves local images.
 - `src/views/`: native Obsidian UI. Views consume normalized models; they do not parse frontmatter.
 - `src/settings.ts`: persisted plugin settings and settings UI.
 - `tests/`: unit tests for pure parser and helper behavior.

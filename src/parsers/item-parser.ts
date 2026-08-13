@@ -1,4 +1,5 @@
 import type { ItemCardData } from '../models/item';
+import { parseItemDescription, stripMarkdownLinks } from './item-description-parser';
 
 const ITEM_CSS_CLASS = 'json5e-item';
 const RARITY_TAG_PREFIX = 'ttrpg-cli/item/rarity/';
@@ -18,6 +19,7 @@ export function isCliItem(frontmatter: Frontmatter | null | undefined): boolean 
 export function parseItemFrontmatter(
 	filePath: string,
 	frontmatter: Frontmatter | null | undefined,
+	markdown = '',
 ): ItemCardData | null {
 	if (!frontmatter || !isCliItem(frontmatter)) {
 		return null;
@@ -25,7 +27,8 @@ export function parseItemFrontmatter(
 
 	const tags = toStringArray(frontmatter.tags);
 	const name = firstNonEmptyString(frontmatter.name, fileNameWithoutExtension(filePath));
-	const detail = optionalString(frontmatter.itemDetail);
+	const rawDetail = optionalString(frontmatter.itemDetail);
+	const detail = rawDetail ? stripMarkdownLinks(rawDetail) : undefined;
 	const image = optionalString(frontmatter.image);
 	const damage = optionalString(frontmatter.itemDmg);
 	const properties = parseLinkedList(frontmatter.itemProp);
@@ -33,12 +36,16 @@ export function parseItemFrontmatter(
 	const rarity = findTagValue(tags, RARITY_TAG_PREFIX);
 	const source = findTagValue(tags, SOURCE_TAG_PREFIX);
 	const weight = toFiniteNumber(frontmatter.itemWeight);
+	const parsedDescription = parseItemDescription(markdown, detail);
 
 	return {
 		filePath,
 		name,
+		description: parsedDescription.description,
 		...(detail ? { detail } : {}),
 		...(image ? { imagePath: normalizeVaultPath(image) } : {}),
+		...(parsedDescription.sourceText ? { sourceText: parsedDescription.sourceText } : {}),
+		hasImage: false,
 		...(rarity ? { rarity } : {}),
 		attunement: tags.includes(ATTUNEMENT_TAG),
 		...(source ? { source } : {}),
@@ -52,10 +59,11 @@ export function parseItemFrontmatter(
 
 export function normalizeVaultPath(path: string): string {
 	const trimmed = path.trim().replaceAll('\\', '/');
-	let decoded = trimmed;
+	const withoutFragment = trimmed.split('#', 1)[0] ?? trimmed;
+	let decoded = withoutFragment;
 
 	try {
-		decoded = decodeURIComponent(trimmed);
+		decoded = decodeURIComponent(withoutFragment);
 	} catch {
 		// A malformed escape should not make an otherwise usable path disappear.
 	}
@@ -113,7 +121,7 @@ function splitCommaSeparated(value: string): string[] {
 }
 
 function stripMarkdownLink(value: string): string {
-	return value.replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1').trim();
+	return stripMarkdownLinks(value).trim();
 }
 
 function optionalString(value: unknown): string | undefined {

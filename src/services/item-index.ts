@@ -2,7 +2,8 @@ import type { App, TFile } from 'obsidian';
 import { normalizePath } from 'obsidian';
 
 import type { ItemCardData } from '../models/item';
-import { parseItemFrontmatter } from '../parsers/item-parser';
+import { isCliItem, parseItemFrontmatter } from '../parsers/item-parser';
+import { resolveArtworkFile } from './artwork-resolver';
 
 export interface ItemIndexResult {
 	indexed: number;
@@ -46,8 +47,14 @@ export class ItemIndex {
 		for (const file of files) {
 			try {
 				const cache = this.app.metadataCache.getFileCache(file);
-				const item = parseItemFrontmatter(file.path, cache?.frontmatter);
+				if (!isCliItem(cache?.frontmatter)) {
+					continue;
+				}
+
+				const markdown = await this.app.vault.cachedRead(file);
+				const item = parseItemFrontmatter(file.path, cache?.frontmatter, markdown);
 				if (item) {
+					item.hasImage = resolveArtworkFile(this.app, item) !== null;
 					indexedItems.push(item);
 				}
 			} catch (error) {
