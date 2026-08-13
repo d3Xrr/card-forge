@@ -2,6 +2,36 @@ import type { ItemCardData } from '../models/item';
 
 export type ItemCardLayout = 'image' | 'compact' | 'text';
 
+export interface ItemCardLayoutProfile {
+	artworkSharePercent: number;
+	bodyFontCqw: number;
+	printFontPoints: number;
+}
+
+const CARD_WIDTH_MM = 63.5;
+export const MINIMUM_PRINT_BODY_FONT_POINTS = 7;
+const MINIMUM_BODY_FONT_CQW = roundUpCqw(
+	pointsToCardWidthCqw(MINIMUM_PRINT_BODY_FONT_POINTS),
+);
+
+const LAYOUT_PROFILE_VALUES: Record<
+	ItemCardLayout,
+	Omit<ItemCardLayoutProfile, 'printFontPoints'>
+> = {
+	image: {
+		artworkSharePercent: 50,
+		bodyFontCqw: 4.35,
+	},
+	compact: {
+		artworkSharePercent: 27,
+		bodyFontCqw: 4,
+	},
+	text: {
+		artworkSharePercent: 0,
+		bodyFontCqw: MINIMUM_BODY_FONT_CQW,
+	},
+};
+
 const IMAGE_LAYOUT_MAX_LOAD = 11;
 const COMPACT_LAYOUT_MAX_LOAD = 22;
 
@@ -53,4 +83,26 @@ export function estimateDescriptionLoad(markdown: string): number {
 
 export function formatLayoutName(layout: ItemCardLayout): string {
 	return layout.toLocaleUpperCase();
+}
+
+export function getItemCardLayoutProfile(layout: ItemCardLayout): ItemCardLayoutProfile {
+	const values = LAYOUT_PROFILE_VALUES[layout];
+	return {
+		...values,
+		printFontPoints: cardWidthCqwToPoints(values.bodyFontCqw),
+	};
+}
+
+function pointsToCardWidthCqw(points: number): number {
+	const millimeters = points * 25.4 / 72;
+	return millimeters / CARD_WIDTH_MM * 100;
+}
+
+function cardWidthCqwToPoints(cqw: number): number {
+	const millimeters = CARD_WIDTH_MM * cqw / 100;
+	return millimeters / 25.4 * 72;
+}
+
+function roundUpCqw(cqw: number): number {
+	return Math.ceil(cqw * 1000) / 1000;
 }

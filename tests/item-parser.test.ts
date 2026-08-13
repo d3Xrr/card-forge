@@ -139,6 +139,27 @@ Then resolve these steps:
 	);
 });
 
+void test('preserves section headings and literal bracketed crafting components', () => {
+	const markdown = `# Wand of the Precocious Apprentice
+*Wand, uncommon*
+
+The wand holds a flicker of borrowed magic.
+
+## Crafting
+
+Creating the wand requires:
+
+- **[Animus].** Any
+- **[Bones].** Bones from an Undead
+- **[Dust].** Fey Dust
+- **[Fluid].** Ectoplasm`;
+
+	assert.equal(
+		parseItemDescription(markdown, 'Wand, uncommon').description,
+		'The wand holds a flicker of borrowed magic.\n\n## Crafting\n\nCreating the wand requires:\n\n- **[Animus].** Any\n- **[Bones].** Bones from an Undead\n- **[Dust].** Fey Dust\n- **[Fluid].** Ectoplasm',
+	);
+});
+
 void test('converts Markdown and wiki links to visible text without exposing destinations', () => {
 	assert.equal(
 		stripMarkdownLinks(

@@ -1,8 +1,14 @@
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 
 import type { ItemCardData } from '../models/item';
-import { ItemCardRenderer, type RenderedItemCard } from '../renderer/item-card-renderer';
+import {
+	ItemCardRenderer,
+	type ArtworkLoadResult,
+	type RenderedItemCard,
+} from '../renderer/item-card-renderer';
+import { formatArtworkOrientation } from '../renderer/artwork-orientation';
 import { formatLayoutName } from '../renderer/item-card-layout';
+import { formatSourceDisplay } from '../renderer/source-formatter';
 import { getArtworkResourcePath } from '../services/artwork-resolver';
 import type { ItemIndex } from '../services/item-index';
 
@@ -20,6 +26,8 @@ export class CardForgeView extends ItemView {
 	private selectedFilePath: string | null = null;
 	private unsubscribeFromIndex: (() => void) | null = null;
 	private overflowFrame: number | null = null;
+	private cardResizeObserver: ResizeObserver | null = null;
+	private previewGeneration = 0;
 
 	constructor(leaf: WorkspaceLeaf, private readonly itemIndex: ItemIndex) {
 		super(leaf);
@@ -107,6 +115,9 @@ export class CardForgeView extends ItemView {
 			window.cancelAnimationFrame(this.overflowFrame);
 			this.overflowFrame = null;
 		}
+		this.cardResizeObserver?.disconnect();
+		this.cardResizeObserver = null;
+		this.previewGeneration += 1;
 		this.containerEl.children[1]?.removeClass('ttrpg-card-forge');
 		this.searchInput = null;
 		this.totalCountElement = null;
@@ -174,8 +185,9 @@ export class CardForgeView extends ItemView {
 			if (item.rarity) {
 				resultMetadata.createSpan({ text: humanizeSlug(item.rarity) });
 			}
-			if (item.source) {
-				resultMetadata.createSpan({ text: item.source.toLocaleUpperCase() });
+			const sourceDisplay = formatSourceDisplay(item.source, item.sourceText, 'compact');
+			if (sourceDisplay) {
+				resultMetadata.createSpan({ text: sourceDisplay });
 			}
 
 			result.addEventListener('click', () => this.selectItem(item.filePath));
@@ -210,6 +222,9 @@ export class CardForgeView extends ItemView {
 			window.cancelAnimationFrame(this.overflowFrame);
 			this.overflowFrame = null;
 		}
+		this.cardResizeObserver?.disconnect();
+		this.cardResizeObserver = null;
+		const previewGeneration = ++this.previewGeneration;
 
 		const selectedItem = this.itemIndex.getItems()
 			.find((item) => item.filePath === this.selectedFilePath);
@@ -231,34 +246,69 @@ export class CardForgeView extends ItemView {
 			selectedItem,
 			artworkResourcePath,
 		);
-		this.renderDiagnostics(selectedItem, renderedCard, artworkResourcePath);
+		this.renderDiagnostics(
+			selectedItem,
+			renderedCard,
+			artworkResourcePath,
+			previewGeneration,
+		);
 	}
 
 	private renderDiagnostics(
 		item: ItemCardData,
 		renderedCard: RenderedItemCard,
-		artworkResourcePath?: string,
+		artworkResourcePath: string | undefined,
+		previewGeneration: number,
 	): void {
 		if (!this.diagnosticsElement) {
 			return;
 		}
 
-		const layoutElement = this.diagnosticsElement.createSpan({
-			text: `Layout: ${formatLayoutName(renderedCard.layout)}`,
-		});
-		if (item.imagePath && !artworkResourcePath) {
-			this.diagnosticsElement.createSpan({ text: 'Artwork unavailable' });
-		} else if (!item.imagePath) {
-			this.diagnosticsElement.createSpan({ text: 'No artwork' });
-		}
-
-		this.overflowFrame = window.requestAnimationFrame(() => {
-			this.overflowFrame = null;
-			if (renderedCard.hasOverflow()) {
-				layoutElement.addClass('is-warning');
-				layoutElement.setText(`Layout: ${formatLayoutName(renderedCard.layout)} · Content needs fitting`);
+		let artworkResult: ArtworkLoadResult | undefined;
+		const updateDiagnostics = (): void => {
+			if (
+				!this.diagnosticsElement
+				|| previewGeneration !== this.previewGeneration
+			) {
+				return;
 			}
+
+			const hasOverflow = renderedCard.hasOverflow();
+			const printFont = renderedCard.printFontPoints.toFixed(1);
+			const parts = [
+				`Layout: ${formatLayoutName(renderedCard.layout)}`,
+				formatArtworkDiagnostic(item, artworkResourcePath, artworkResult),
+				hasOverflow
+					? `Content overflow at ${printFont} pt; continuation card may be required`
+					: 'Fits',
+			];
+			this.diagnosticsElement.empty();
+			this.diagnosticsElement.createSpan({
+				text: parts.join(' · '),
+				cls: hasOverflow ? 'is-warning' : undefined,
+			});
+		};
+
+		const scheduleDiagnostics = (): void => {
+			if (this.overflowFrame !== null) {
+				window.cancelAnimationFrame(this.overflowFrame);
+			}
+			this.overflowFrame = window.requestAnimationFrame(() => {
+				this.overflowFrame = null;
+				updateDiagnostics();
+			});
+		};
+
+		this.cardResizeObserver = new ResizeObserver(scheduleDiagnostics);
+		this.cardResizeObserver.observe(renderedCard.element);
+		void renderedCard.artworkReady.then((result) => {
+			if (previewGeneration !== this.previewGeneration) {
+				return;
+			}
+			artworkResult = result;
+			scheduleDiagnostics();
 		});
+		scheduleDiagnostics();
 	}
 
 	private openSelectedItem(): void {
@@ -272,6 +322,29 @@ export class CardForgeView extends ItemView {
 	private openItem(item: ItemCardData): void {
 		void this.app.workspace.openLinkText(item.filePath, '', false);
 	}
+}
+
+function formatArtworkDiagnostic(
+	item: ItemCardData,
+	artworkResourcePath?: string,
+	artworkResult?: ArtworkLoadResult,
+): string {
+	if (!item.imagePath) {
+		return 'No artwork';
+	}
+	if (!artworkResourcePath || artworkResult?.status === 'error') {
+		return 'Artwork unavailable';
+	}
+	if (artworkResult?.status === 'ready') {
+		return `Artwork: ${formatArtworkOrientation(artworkResult.orientation)}`;
+	}
+	if (artworkResult?.status === 'invalid-dimensions') {
+		return 'Artwork dimensions unavailable';
+	}
+	if (artworkResult?.status === 'not-rendered') {
+		return 'Artwork omitted';
+	}
+	return 'Artwork: loading';
 }
 
 function isSearchMatch(item: ItemCardData, query: string): boolean {

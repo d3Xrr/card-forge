@@ -10,6 +10,20 @@ export function renderSafeMarkdown(markdown: string, container: HTMLElement): vo
 			continue;
 		}
 
+		const heading = parseDescriptionHeading(line);
+		if (heading) {
+			const tagName = heading.level === 2 ? 'h4' : 'h5';
+			const element = appendElement(
+				container,
+				tagName,
+				'ttrpg-card-forge-card__section-heading',
+			);
+			element.dataset.sourceLevel = String(heading.level);
+			renderInlineMarkdown(heading.text, element);
+			index += 1;
+			continue;
+		}
+
 		const unorderedMatch = matchUnorderedListItem(line);
 		if (unorderedMatch) {
 			const list = appendElement(container, 'ul', 'ttrpg-card-forge-card__list');
@@ -46,6 +60,7 @@ export function renderSafeMarkdown(markdown: string, container: HTMLElement): vo
 			const paragraphLine = lines[index] ?? '';
 			if (
 				paragraphLine.trim().length === 0
+				|| parseDescriptionHeading(paragraphLine) !== null
 				|| matchUnorderedListItem(paragraphLine) !== null
 				|| matchOrderedListItem(paragraphLine) !== null
 			) {
@@ -60,6 +75,28 @@ export function renderSafeMarkdown(markdown: string, container: HTMLElement): vo
 			index += 1;
 		}
 	}
+}
+
+export interface DescriptionHeading {
+	level: 2 | 3;
+	text: string;
+}
+
+export function parseDescriptionHeading(line: string): DescriptionHeading | null {
+	const match = line.match(/^\s*(#{2,3})\s+(.+?)\s*#*\s*$/u);
+	if (!match?.[1] || !match[2]) {
+		return null;
+	}
+
+	const text = match[2].trim();
+	if (text.length === 0) {
+		return null;
+	}
+
+	return {
+		level: match[1].length as 2 | 3,
+		text,
+	};
 }
 
 function renderInlineMarkdown(markdown: string, container: HTMLElement): void {

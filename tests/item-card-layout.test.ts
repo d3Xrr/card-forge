@@ -4,6 +4,8 @@ import test from 'node:test';
 import type { ItemCardData } from '../src/models/item';
 import {
 	estimateDescriptionLoad,
+	getItemCardLayoutProfile,
+	MINIMUM_PRINT_BODY_FONT_POINTS,
 	selectItemCardLayout,
 } from '../src/renderer/item-card-layout';
 
@@ -44,4 +46,17 @@ void test('layout load accounts for paragraphs and lists as well as text length'
 	const flat = 'One concise sentence with a modest amount of text.';
 	const structured = '- First option\n- Second option\n- Third option';
 	assert.ok(estimateDescriptionLoad(structured) > estimateDescriptionLoad(flat));
+});
+
+void test('layout profiles never shrink below the minimum print body size', () => {
+	for (const layout of ['image', 'compact', 'text'] as const) {
+		assert.ok(
+			getItemCardLayoutProfile(layout).printFontPoints
+				>= MINIMUM_PRINT_BODY_FONT_POINTS,
+		);
+	}
+	assert.ok(
+		getItemCardLayoutProfile('image').artworkSharePercent
+			> getItemCardLayoutProfile('compact').artworkSharePercent,
+	);
 });
