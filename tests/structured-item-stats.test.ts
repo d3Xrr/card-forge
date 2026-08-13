@@ -4,8 +4,8 @@ import test from 'node:test';
 import type { ItemCardData } from '../src/models/item';
 import { planItemCardPages } from '../src/renderer/item-card-planner';
 import {
-	buildCompactItemStatLines,
 	buildItemStatRows,
+	estimateItemStatsLoad,
 	formatItemWeight,
 	hasMeaningfulItemStats,
 } from '../src/renderer/structured-item-stats';
@@ -76,15 +76,25 @@ void test('includes range in centralized structured statistics', () => {
 	});
 });
 
-void test('preserves magic weapon properties in compact stats', () => {
-	const lines = buildCompactItemStatLines(createItem({
+void test('promotes Scimitar metadata to labeled structured rows', () => {
+	const item = createItem({
 		name: 'Scimitar of Speed',
-		description: 'A magic weapon effect.',
+		description: 'You gain a +2 bonus to attack and damage rolls.\n\nYou can make one attack as a Bonus Action.',
 		damage: '1d6 slashing',
 		properties: ['Finesse', 'Light'],
 		mastery: 'Nick',
-	}));
-	assert.equal(lines[0], '1d6 slashing · Finesse · Light · Mastery: Nick');
+		weight: 3,
+	});
+	assert.deepEqual(buildItemStatRows(item), [
+		{ label: 'Damage', values: ['1d6 slashing'] },
+		{ label: 'Properties', values: ['Finesse · Light'] },
+		{ label: 'Mastery', values: ['Nick'] },
+		{ label: 'Weight', values: ['3 lb.'] },
+	]);
+	assert.ok(estimateItemStatsLoad(item, 'compact') > 0);
+	const pages = planItemCardPages(item, { artworkOrientation: 'landscape' });
+	assert.equal(pages.length, 1);
+	assert.equal(pages[0]?.statsPresentation, 'compact');
 });
 
 void test('shows structured stats only on the primary page', () => {

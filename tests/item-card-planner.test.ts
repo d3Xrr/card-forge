@@ -122,6 +122,20 @@ void test('plans multiple continuation pages for long rules text', () => {
 	assert.ok(pages.slice(1).every((page) => page.kind === 'continuation'));
 });
 
+void test('paginates dense readable body text instead of shrinking below the print floor', () => {
+	const description = Array.from(
+		{ length: 11 },
+		(_, index) => `Rule ${index + 1} explains a substantial condition with enough detail to occupy two readable lines.`,
+	).join('\n\n');
+	const pages = planItemCardPages(createItem({
+		description,
+		hasImage: false,
+	}));
+
+	assert.ok(pages.length > 1);
+	assert.ok(pages.every((page) => page.layout === 'text'));
+});
+
 void test('moves Crafting to a dedicated page as a unit when primary capacity is exceeded', () => {
 	const craftingItems = Array.from(
 		{ length: 8 },

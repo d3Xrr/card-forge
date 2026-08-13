@@ -11,6 +11,10 @@ import {
 	getItemCardLayoutProfile,
 	type ItemCardLayout,
 } from './item-card-layout';
+import {
+	formatPrintPointsAsCqw,
+	PRINT_TYPOGRAPHY,
+} from './print-typography';
 import { renderSafeMarkdownBlocks } from './safe-markdown-renderer';
 import { formatSourceDisplay } from './source-formatter';
 import { renderItemStats } from './structured-item-stats';
@@ -55,6 +59,30 @@ export class ItemCardRenderer {
 			'--ttrpg-card-body-font-size',
 			`${layoutProfile.bodyFontCqw}cqw`,
 		);
+		card.style.setProperty(
+			'--ttrpg-card-title-font-size',
+			formatPrintPointsAsCqw(PRINT_TYPOGRAPHY.title.targetPoints),
+		);
+		card.style.setProperty(
+			'--ttrpg-card-subtitle-font-size',
+			formatPrintPointsAsCqw(PRINT_TYPOGRAPHY.subtitle.targetPoints),
+		);
+		card.style.setProperty(
+			'--ttrpg-card-stats-font-size',
+			formatPrintPointsAsCqw(PRINT_TYPOGRAPHY.stats.targetPoints),
+		);
+		card.style.setProperty(
+			'--ttrpg-card-stat-label-font-size',
+			formatPrintPointsAsCqw(PRINT_TYPOGRAPHY.statLabel.targetPoints),
+		);
+		card.style.setProperty(
+			'--ttrpg-card-small-font-size',
+			formatPrintPointsAsCqw(PRINT_TYPOGRAPHY.source.targetPoints),
+		);
+		card.style.setProperty(
+			'--ttrpg-card-page-number-font-size',
+			formatPrintPointsAsCqw(PRINT_TYPOGRAPHY.pageNumber.targetPoints),
+		);
 		card.setAttribute(
 			'aria-label',
 			page.pageCount > 1
@@ -73,9 +101,12 @@ export class ItemCardRenderer {
 				`${page.pageIndex + 1} / ${page.pageCount}`,
 			);
 		}
-		const subtitle = buildPageSubtitle(page);
-		if (subtitle) {
-			appendElement(header, 'div', 'ttrpg-card-forge-card__identity', subtitle);
+		const subtitleLines = buildPageSubtitleLines(page);
+		if (subtitleLines.length > 0) {
+			const identity = appendElement(header, 'div', 'ttrpg-card-forge-card__identity');
+			for (const line of subtitleLines) {
+				appendElement(identity, 'span', 'ttrpg-card-forge-card__identity-line', line);
+			}
 		}
 
 		const content = appendElement(card, 'div', 'ttrpg-card-forge-card__content');
@@ -109,12 +140,11 @@ export class ItemCardRenderer {
 			renderItemStats(body, item, page.statsPresentation);
 		}
 
-		const footer = appendElement(card, 'footer', 'ttrpg-card-forge-card__footer');
-		appendElement(footer, 'span', 'ttrpg-card-forge-card__mark', 'CARD FORGE');
 		const sourceDisplay = page.showSource
 			? formatSourceDisplay(item.source, item.sourceText)
 			: undefined;
 		if (sourceDisplay) {
+			const footer = appendElement(card, 'footer', 'ttrpg-card-forge-card__footer');
 			appendElement(
 				footer,
 				'span',
@@ -193,19 +223,35 @@ function renderArtwork(
 	});
 }
 
-function buildPageSubtitle(page: ItemCardPage): string | undefined {
+function buildPageSubtitleLines(page: ItemCardPage): string[] {
 	if (page.kind === 'continuation') {
-		return 'Continued';
+		return ['Continued'];
 	}
 	if (page.kind === 'crafting') {
-		return 'Crafting';
+		return ['Crafting'];
 	}
-	return buildIdentityLine(page.item);
+	return buildItemIdentityLines(page.item);
 }
 
-function buildIdentityLine(item: ItemCardData): string | undefined {
+export function buildItemIdentityLines(item: ItemCardData): string[] {
 	if (item.detail) {
-		return item.detail;
+		const detailSegments = splitDetailSegments(item.detail);
+		const primary = detailSegments.shift();
+		let metadata = detailSegments.join(', ').trim();
+		const exactAttunement = /\s*\(\s*requires attunement\s*\)\s*/iu;
+		const detailMentionsAttunement = /requires attunement/iu.test(metadata);
+		const removedExactAttunement = exactAttunement.test(metadata);
+		metadata = metadata.replace(exactAttunement, '').trim();
+		const metadataParts = [
+			...(metadata ? [capitalizeFirst(metadata)] : []),
+			...(item.attunement && (removedExactAttunement || !detailMentionsAttunement)
+				? ['Requires attunement']
+				: []),
+		];
+		return [
+			...(primary ? [primary] : []),
+			...(metadataParts.length > 0 ? [metadataParts.join(' · ')] : []),
+		];
 	}
 
 	const parts: string[] = [];
@@ -215,7 +261,32 @@ function buildIdentityLine(item: ItemCardData): string | undefined {
 	if (item.attunement) {
 		parts.push('Requires attunement');
 	}
-	return parts.length > 0 ? parts.join(' · ') : undefined;
+	return parts.length > 0 ? [parts.join(' · ')] : [];
+}
+
+function splitDetailSegments(detail: string): string[] {
+	const segments: string[] = [];
+	let depth = 0;
+	let start = 0;
+	for (let index = 0; index < detail.length; index += 1) {
+		const character = detail[index];
+		if (character === '(') {
+			depth += 1;
+		} else if (character === ')') {
+			depth = Math.max(0, depth - 1);
+		} else if (character === ',' && depth === 0) {
+			segments.push(detail.slice(start, index).trim());
+			start = index + 1;
+		}
+	}
+	segments.push(detail.slice(start).trim());
+	return segments.filter(Boolean);
+}
+
+function capitalizeFirst(value: string): string {
+	return value.length > 0
+		? `${value[0]?.toLocaleUpperCase()}${value.slice(1)}`
+		: value;
 }
 
 function humanizeSlug(value: string): string {

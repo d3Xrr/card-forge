@@ -51,12 +51,12 @@ interface PackedBlocks {
 }
 
 const PAGE_CAPACITIES: Record<ItemCardLayout | 'continuation' | 'crafting', number> = {
-	image: 10.5,
-	portrait: 12,
-	compact: 18,
-	text: 28,
-	continuation: 31,
-	crafting: 29,
+	image: 9.75,
+	portrait: 10.5,
+	compact: 15,
+	text: 23,
+	continuation: 25,
+	crafting: 24,
 };
 const SPARSE_FINAL_PAGE_THRESHOLD = 0.38;
 const BALANCED_FINAL_PAGE_TARGET = 0.46;

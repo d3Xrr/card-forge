@@ -7,6 +7,7 @@ import {
 	ITEM_ARTWORK_FIT_MODE,
 } from '../src/renderer/artwork-orientation';
 import { parseDescriptionHeading } from '../src/renderer/safe-markdown-renderer';
+import { buildItemIdentityLines } from '../src/renderer/item-card-renderer';
 import { formatSourceDisplay } from '../src/renderer/source-formatter';
 
 void test('recognizes H2 and H3 description headings without accepting other lines', () => {
@@ -36,6 +37,36 @@ void test('classifies square-like artwork and handles invalid dimensions', () =>
 
 void test('item artwork defaults to preserving the complete image', () => {
 	assert.equal(ITEM_ARTWORK_FIT_MODE, 'contain');
+});
+
+void test('formats item identity as readable semantic lines', () => {
+	assert.deepEqual(buildItemIdentityLines({
+		filePath: 'items/scimitar-of-speed.md',
+		name: 'Scimitar of Speed',
+		description: '',
+		detail: 'Weapon (scimitar), very rare (requires attunement)',
+		rarity: 'very-rare',
+		attunement: true,
+		hasImage: true,
+		rawTags: [],
+	}), [
+		'Weapon (scimitar)',
+		'Very rare · Requires attunement',
+	]);
+});
+
+void test('does not split commas inside identity parentheses', () => {
+	assert.deepEqual(buildItemIdentityLines({
+		filePath: 'items/focus.md',
+		name: 'Focus',
+		description: '',
+		detail: 'Wondrous item (arcane, divine), rare',
+		hasImage: false,
+		rawTags: [],
+	}), [
+		'Wondrous item (arcane, divine)',
+		'Rare',
+	]);
 });
 
 void test('formats Monsters of Drakkenheim sources for card and browser', () => {

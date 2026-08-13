@@ -74,40 +74,15 @@ export function buildItemStatRows(item: ItemCardData): ItemStatRow[] {
 	return rows;
 }
 
-export function buildCompactItemStatLines(item: ItemCardData): string[] {
-	const stats = getItemStats(item);
-	const primary: string[] = [];
-	const secondary: string[] = [];
-	if (stats.damage) {
-		primary.push(stats.damageTwoHanded
-			? `1H ${stats.damage}`
-			: stats.damage);
-	}
-	if (stats.damageTwoHanded) {
-		primary.push(`2H ${stats.damageTwoHanded}`);
-	}
-	primary.push(...stats.properties);
-	if (stats.mastery) {
-		primary.push(`Mastery: ${stats.mastery}`);
-	}
-	if (stats.range) {
-		secondary.push(`Range ${stats.range}`);
-	}
-	if (stats.weight !== undefined) {
-		secondary.push(formatItemWeight(stats.weight));
-	}
-	if (stats.cost) {
-		secondary.push(stats.cost);
-	}
-	return [primary.join(' · '), secondary.join(' · ')].filter((line) => line.length > 0);
-}
-
 export function estimateItemStatsLoad(
 	item: ItemCardData,
 	presentation: ItemStatsPresentation,
 ): number {
 	if (presentation === 'compact') {
-		return buildCompactItemStatLines(item).length * 1.35;
+		const rows = buildItemStatRows(item);
+		const rowUnits = rows.reduce((total, row) =>
+			total + (row.label === 'Properties' || row.values.length > 1 ? 1 : 0.5), 0);
+		return rowUnits * 1.15;
 	}
 	return buildItemStatRows(item).reduce(
 		(total, row) => total + 1.15 + Math.max(0, row.values.length - 1) * 0.8,
@@ -120,14 +95,13 @@ export function renderItemStats(
 	item: ItemCardData,
 	presentation: ItemStatsPresentation,
 ): void {
-	if (presentation === 'compact') {
-		renderCompactStats(container, item);
-		return;
-	}
-
-	const stats = container.createDiv({ cls: 'ttrpg-card-forge-card__stats' });
+	const stats = container.createDiv({
+		cls: `ttrpg-card-forge-card__stats ttrpg-card-forge-card__stats--${presentation}`,
+	});
 	for (const row of buildItemStatRows(item)) {
 		const stat = stats.createDiv({ cls: 'ttrpg-card-forge-card__stat' });
+		stat.dataset.stat = row.label.toLocaleLowerCase();
+		stat.toggleClass('is-multiline', row.values.length > 1);
 		stat.createDiv({ cls: 'ttrpg-card-forge-card__stat-label', text: row.label });
 		const values = stat.createDiv({ cls: 'ttrpg-card-forge-card__stat-values' });
 		for (const value of row.values) {
@@ -138,15 +112,4 @@ export function renderItemStats(
 
 export function formatItemWeight(weight: number): string {
 	return `${Number.isInteger(weight) ? weight.toFixed(0) : String(weight)} lb.`;
-}
-
-function renderCompactStats(container: HTMLElement, item: ItemCardData): void {
-	const lines = buildCompactItemStatLines(item);
-	if (lines.length === 0) {
-		return;
-	}
-	const stats = container.createDiv({ cls: 'ttrpg-card-forge-card__metrics' });
-	for (const line of lines) {
-		stats.createDiv({ text: line });
-	}
 }

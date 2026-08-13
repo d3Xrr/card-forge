@@ -1,9 +1,12 @@
 import type { ItemCardData } from '../models/item';
-import { PHYSICAL_CARD_PROFILE } from '../models/physical-card-profile';
 import type {
 	ArtworkOrientation,
 	ItemCardLayout,
 } from '../models/item-card-page';
+import {
+	PRINT_TYPOGRAPHY,
+	printPointsToCardWidthCqw,
+} from './print-typography';
 
 export type { ItemCardLayout } from '../models/item-card-page';
 
@@ -13,30 +16,27 @@ export interface ItemCardLayoutProfile {
 	printFontPoints: number;
 }
 
-export const MINIMUM_PRINT_BODY_FONT_POINTS = 7;
-const MINIMUM_BODY_FONT_CQW = roundUpCqw(
-	pointsToCardWidthCqw(MINIMUM_PRINT_BODY_FONT_POINTS),
-);
+export const MINIMUM_PRINT_BODY_FONT_POINTS = PRINT_TYPOGRAPHY.body.minimumPoints;
 
 const LAYOUT_PROFILE_VALUES: Record<
 	ItemCardLayout,
-	Omit<ItemCardLayoutProfile, 'printFontPoints'>
+	{ artworkSharePercent: number; printFontPoints: number }
 > = {
 	image: {
-		artworkSharePercent: 50,
-		bodyFontCqw: 4.35,
+		artworkSharePercent: 43,
+		printFontPoints: 10,
 	},
 	portrait: {
-		artworkSharePercent: 34,
-		bodyFontCqw: 4,
+		artworkSharePercent: 32,
+		printFontPoints: 9,
 	},
 	compact: {
-		artworkSharePercent: 27,
-		bodyFontCqw: 4,
+		artworkSharePercent: 24,
+		printFontPoints: 9,
 	},
 	text: {
 		artworkSharePercent: 0,
-		bodyFontCqw: MINIMUM_BODY_FONT_CQW,
+		printFontPoints: MINIMUM_PRINT_BODY_FONT_POINTS,
 	},
 };
 
@@ -103,18 +103,8 @@ export function getItemCardLayoutProfile(layout: ItemCardLayout): ItemCardLayout
 	const values = LAYOUT_PROFILE_VALUES[layout];
 	return {
 		...values,
-		printFontPoints: cardWidthCqwToPoints(values.bodyFontCqw),
+		bodyFontCqw: roundUpCqw(printPointsToCardWidthCqw(values.printFontPoints)),
 	};
-}
-
-function pointsToCardWidthCqw(points: number): number {
-	const millimeters = points * 25.4 / 72;
-	return millimeters / PHYSICAL_CARD_PROFILE.widthMm * 100;
-}
-
-function cardWidthCqwToPoints(cqw: number): number {
-	const millimeters = PHYSICAL_CARD_PROFILE.widthMm * cqw / 100;
-	return millimeters / 25.4 * 72;
 }
 
 function roundUpCqw(cqw: number): number {
