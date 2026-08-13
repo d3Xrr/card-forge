@@ -9,6 +9,7 @@ import {
 	formatItemWeight,
 	hasMeaningfulItemStats,
 	isCompactAtomicStatValue,
+	selectCompactStatsLayout,
 } from '../src/renderer/structured-item-stats';
 
 function createItem(overrides: Partial<ItemCardData> = {}): ItemCardData {
@@ -49,7 +50,7 @@ void test('builds a useful full Greataxe stat presentation without prose', () =>
 });
 
 void test('labels Battleaxe one-handed and two-handed damage', () => {
-	const rows = buildItemStatRows(createItem({
+	const item = createItem({
 		name: 'Battleaxe',
 		damage: '1d8 slashing',
 		damageTwoHanded: '1d10 slashing',
@@ -57,12 +58,17 @@ void test('labels Battleaxe one-handed and two-handed damage', () => {
 		mastery: 'Topple',
 		cost: '10 gp',
 		weight: 4,
-	}));
+	});
+	const rows = buildItemStatRows(item);
 	assert.deepEqual(rows[0], {
 		label: 'Damage',
 		values: ['One-handed: 1d8 slashing', 'Two-handed: 1d10 slashing'],
 	});
 	assert.equal(formatItemWeight(4), '4 lb.');
+	const pages = planItemCardPages(item, { artworkOrientation: 'landscape' });
+	assert.equal(pages.length, 1);
+	assert.equal(pages[0]?.showArtwork, true);
+	assert.equal(pages[0]?.statsPresentation, 'full');
 });
 
 void test('includes range in centralized structured statistics', () => {
@@ -113,6 +119,35 @@ void test('keeps compact damage and short metadata groups atomic when practical'
 		isCompactAtomicStatValue('Properties', 'A very long collection of properties that needs wrapping'),
 		false,
 	);
+});
+
+void test('stacks Axe-like compact stats beside portrait artwork', () => {
+	const item = createItem({
+		name: 'Artifact Axe',
+		description: Array.from(
+			{ length: 18 },
+			(_, index) => `Artifact property ${index + 1} describes a distinct effect.`,
+		).join('\n\n'),
+		damage: '1d8 slashing',
+		damageTwoHanded: '1d10 slashing',
+		properties: ['Thrown', 'Versatile'],
+		mastery: 'Topple',
+		range: '20/60',
+		weight: 4,
+	});
+	const pages = planItemCardPages(item, { artworkOrientation: 'portrait' });
+
+	assert.equal(pages[0]?.layout, 'portrait');
+	assert.equal(pages[0]?.showArtwork, true);
+	assert.equal(pages[0]?.statsPresentation, 'compact');
+	assert.equal(selectCompactStatsLayout('compact', pages[0].layout), 'stacked');
+	assert.deepEqual(buildItemStatRows(item).map((row) => row.label), [
+		'Damage',
+		'Properties',
+		'Mastery',
+		'Range',
+		'Weight',
+	]);
 });
 
 void test('shows structured stats only on the primary page', () => {

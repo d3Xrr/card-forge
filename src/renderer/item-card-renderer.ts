@@ -147,7 +147,7 @@ export class ItemCardRenderer {
 		}
 
 		if (page.showStats && page.statsPresentation) {
-			renderItemStats(body, item, page.statsPresentation);
+			renderItemStats(body, item, page.statsPresentation, layout);
 		}
 
 		const sourceDisplay = page.showSource

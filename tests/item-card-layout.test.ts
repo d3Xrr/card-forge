@@ -14,6 +14,7 @@ import {
 	chooseArtworkPriorityFit,
 	createItemCardPageMeasurementKey,
 	findBestAdaptiveBodyFit,
+	ITEM_CARD_FIT_CAPACITY_SCALES,
 } from '../src/renderer/item-card-fit-service';
 import { PRINT_TYPOGRAPHY } from '../src/renderer/print-typography';
 
@@ -145,6 +146,19 @@ void test('adaptive fit reports failure only after exhausting the 7 pt floor', a
 
 	assert.equal(result, undefined);
 	assert.deepEqual(attempted, [10, 9.5, 9, 8.5, 8, 7.5, 7]);
+});
+
+void test('fit candidates include conservative table-pagination fallbacks', () => {
+	assert.deepEqual(ITEM_CARD_FIT_CAPACITY_SCALES, [
+		1,
+		0.88,
+		0.76,
+		0.66,
+		0.55,
+		0.45,
+		0.35,
+		0.25,
+	]);
 });
 
 void test('prefers artwork when its page penalty is reasonable', () => {

@@ -19,7 +19,16 @@ export interface FittedItemCardPlan {
 	unfitPageIndexes: ReadonlySet<number>;
 }
 
-const CAPACITY_SCALES = [1, 0.88, 0.76, 0.66, 0.55] as const;
+export const ITEM_CARD_FIT_CAPACITY_SCALES = Object.freeze([
+	1,
+	0.88,
+	0.76,
+	0.66,
+	0.55,
+	0.45,
+	0.35,
+	0.25,
+] as const);
 
 export interface AdaptiveBodyFit<T> {
 	bodyFontPoints: number;
@@ -107,7 +116,7 @@ export class ItemCardFitService {
 		const artworkAvailable = artworkResult.status === 'ready';
 		let lastPlan: ItemCardPage[] = [];
 		let lastUnfitPageIndexes = new Set<number>();
-		let lastCapacityScale: number = CAPACITY_SCALES[0];
+		let lastCapacityScale: number = ITEM_CARD_FIT_CAPACITY_SCALES[0];
 		let lastBodyFontPoints = getAdaptiveBodyFontCandidates().at(-1) ?? 7;
 		try {
 			const bodyCandidates = getAdaptiveBodyFontCandidates();
@@ -227,7 +236,7 @@ export class ItemCardFitService {
 	): Promise<MeasuredFit | undefined> {
 		const artworkShares = showArtwork ? ARTWORK_SHARE_CANDIDATES : [undefined];
 		for (const artworkSharePercent of artworkShares) {
-			for (const capacityScale of CAPACITY_SCALES) {
+			for (const capacityScale of ITEM_CARD_FIT_CAPACITY_SCALES) {
 				const pages = planItemCardPages(item, {
 					artworkOrientation,
 					artworkAvailable: showArtwork,

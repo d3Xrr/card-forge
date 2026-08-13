@@ -1,5 +1,8 @@
 import type { ItemCardData } from '../models/item';
-import type { ItemStatsPresentation } from '../models/item-card-page';
+import type {
+	ItemCardLayout,
+	ItemStatsPresentation,
+} from '../models/item-card-page';
 
 export interface ItemStats {
 	damage?: string;
@@ -15,6 +18,8 @@ export interface ItemStatRow {
 	label: string;
 	values: string[];
 }
+
+export type CompactStatsLayout = 'grid' | 'stacked';
 
 const COMPACT_ATOMIC_VALUE_MAX_LENGTH = 26;
 
@@ -96,9 +101,15 @@ export function renderItemStats(
 	container: HTMLElement,
 	item: ItemCardData,
 	presentation: ItemStatsPresentation,
+	cardLayout: ItemCardLayout,
 ): void {
+	const compactLayout = selectCompactStatsLayout(presentation, cardLayout);
 	const stats = container.createDiv({
-		cls: `ttrpg-card-forge-card__stats ttrpg-card-forge-card__stats--${presentation}`,
+		cls: [
+			'ttrpg-card-forge-card__stats',
+			`ttrpg-card-forge-card__stats--${presentation}`,
+			...(compactLayout ? [`ttrpg-card-forge-card__stats--${compactLayout}`] : []),
+		].join(' '),
 	});
 	for (const row of buildItemStatRows(item)) {
 		const stat = stats.createDiv({ cls: 'ttrpg-card-forge-card__stat' });
@@ -117,6 +128,16 @@ export function renderItemStats(
 			);
 		}
 	}
+}
+
+export function selectCompactStatsLayout(
+	presentation: ItemStatsPresentation,
+	cardLayout: ItemCardLayout,
+): CompactStatsLayout | undefined {
+	if (presentation !== 'compact') {
+		return undefined;
+	}
+	return cardLayout === 'portrait' ? 'stacked' : 'grid';
 }
 
 export function isCompactAtomicStatValue(label: string, value: string): boolean {

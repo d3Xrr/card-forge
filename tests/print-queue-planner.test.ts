@@ -7,6 +7,7 @@ import type { PrintQueueEntry } from '../src/models/print-queue';
 import {
 	calculatePrintQueueSummary,
 	flattenPrintQueue,
+	getInvalidQueueEntries,
 	resolvePrintQueue,
 	type PhysicalItemPlan,
 } from '../src/services/print-queue-planner';
@@ -66,6 +67,26 @@ void test('calculates unique types, copies, physical cards, A4 pages, and missin
 		a4Pages: 2,
 		unavailableEntries: 1,
 	});
+});
+
+void test('preview-approved canonical pages are the same pages consumed by export', () => {
+	const item = createItem('apparatus.md', 'Apparatus');
+	const pages = [
+		createPage(item, 0, 3),
+		createPage(item, 1, 3),
+		createPage(item, 2, 3),
+	];
+	const resolved = resolvePrintQueue(
+		[{ id: 'apparatus', filePath: item.filePath, quantity: 1 }],
+		[item],
+		new Map([[item.filePath, { pages, unfitPageIndexes: EMPTY_SET }]]),
+	);
+
+	assert.deepEqual(getInvalidQueueEntries(resolved), []);
+	assert.deepEqual(
+		flattenPrintQueue(resolved).map((card) => card.page),
+		pages,
+	);
 });
 
 function createItem(filePath: string, name: string): ItemCardData {

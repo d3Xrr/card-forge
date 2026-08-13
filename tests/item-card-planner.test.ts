@@ -191,7 +191,7 @@ void test('keeps an artwork-led ten-row table intact within two planned cards', 
 		...rows,
 	].join('\n');
 	const pages = planItemCardPages(createItem({
-		name: 'Table Item',
+		name: 'Alchemy Jug',
 		description,
 		weight: 12,
 	}), { artworkOrientation: 'landscape', bodyFontPoints: 8 });
@@ -241,7 +241,10 @@ void test('moves Crafting to a dedicated page as a unit when primary capacity is
 		'',
 		craftingItems,
 	].join('\n');
-	const pages = planItemCardPages(createItem({ description }), {
+	const pages = planItemCardPages(createItem({
+		name: 'Wand of the Precocious Apprentice',
+		description,
+	}), {
 		artworkOrientation: 'portrait',
 	});
 
@@ -298,6 +301,49 @@ void test('splits oversized tables only between rows and repeats headers', () =>
 	assert.deepEqual(
 		renderedRows.map((row) => row[0]),
 		Array.from({ length: 42 }, (_, index) => `Liquid ${index + 1}`),
+	);
+});
+
+void test('isolates Apparatus-like wrapped rows when conservative table fitting is required', () => {
+	const expectedRows = Array.from({ length: 10 }, (_, index) => String(index + 1));
+	const rows = expectedRows.map((lever) => [
+		lever,
+		`Lever ${lever} activates a mechanism with a detailed operational effect and several conditions.`,
+		`Lever ${lever} reverses that mechanism with another detailed effect and several restrictions.`,
+	]);
+	const description = [
+		'An operator can manipulate the controls described below.',
+		'',
+		'| Lever | Up | Down |',
+		'| --- | --- | --- |',
+		...rows.map((row) => `| ${row.join(' | ')} |`),
+	].join('\n');
+	const pages = planItemCardPages(createItem({ description, weight: 500 }), {
+		artworkOrientation: 'landscape',
+		bodyFontPoints: 7,
+		capacityScale: 0.25,
+	});
+	const fragments = pages.flatMap((page) =>
+		page.blocks.filter((block) => block.type === 'table'),
+	);
+
+	assert.equal(pages[0]?.showArtwork, true);
+	assert.ok(pages.every((page) => !page.hasUnsplitOverflow));
+	assert.equal(fragments.length, 10);
+	assert.ok(fragments.every((fragment) =>
+		fragment.type === 'table'
+		&& fragment.headers.join('|') === 'Lever|Up|Down'
+		&& fragment.rows.length === 1,
+	));
+	assert.deepEqual(
+		fragments.flatMap((fragment) => fragment.type === 'table' ? fragment.rows : []),
+		rows,
+	);
+	assert.deepEqual(
+		fragments.flatMap((fragment) => fragment.type === 'table'
+			? fragment.rows.map((row) => row[0])
+			: []),
+		expectedRows,
 	);
 });
 

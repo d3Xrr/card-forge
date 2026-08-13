@@ -583,5 +583,5 @@ function isHeadingLikeBlock(block: MarkdownBlock | undefined): boolean {
 }
 
 function clampCapacityScale(scale: number): number {
-	return Math.min(1, Math.max(0.55, scale));
+	return Math.min(1, Math.max(0.25, scale));
 }
