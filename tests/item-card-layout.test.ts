@@ -4,10 +4,13 @@ import test from 'node:test';
 import type { ItemCardData } from '../src/models/item';
 import {
 	estimateDescriptionLoad,
+	getAdaptiveBodyFontCandidates,
 	getItemCardLayoutProfile,
 	MINIMUM_PRINT_BODY_FONT_POINTS,
 	selectItemCardLayout,
+	selectPreferredBodyFontPoints,
 } from '../src/renderer/item-card-layout';
+import { findBestAdaptiveBodyFit } from '../src/renderer/item-card-fit-service';
 import { PRINT_TYPOGRAPHY } from '../src/renderer/print-typography';
 
 function createItem(overrides: Partial<ItemCardData> = {}): ItemCardData {
@@ -54,7 +57,7 @@ void test('layout load accounts for paragraphs and lists as well as text length'
 });
 
 void test('layout profiles never shrink below the minimum print body size', () => {
-	assert.equal(MINIMUM_PRINT_BODY_FONT_POINTS, 8.5);
+	assert.equal(MINIMUM_PRINT_BODY_FONT_POINTS, 7);
 	for (const layout of ['image', 'portrait', 'compact', 'text'] as const) {
 		assert.ok(
 			getItemCardLayoutProfile(layout).printFontPoints
@@ -65,15 +68,66 @@ void test('layout profiles never shrink below the minimum print body size', () =
 		getItemCardLayoutProfile('image').artworkSharePercent
 			> getItemCardLayoutProfile('compact').artworkSharePercent,
 	);
+	assert.equal(getItemCardLayoutProfile('text', 6).printFontPoints, 7);
+	assert.equal(getItemCardLayoutProfile('text', 8).printFontPoints, 8);
+	assert.equal(getItemCardLayoutProfile('image', 10).artworkSharePercent, 43);
+	assert.equal(getItemCardLayoutProfile('image', 10, true).artworkSharePercent, 34);
 });
 
-void test('enforces print-oriented hierarchy floors for every card text role', () => {
+void test('keeps title, subtitle, stats, and source floors independent from adaptive body type', () => {
 	assert.ok(PRINT_TYPOGRAPHY.title.targetPoints >= 15);
 	assert.ok(PRINT_TYPOGRAPHY.title.minimumPoints >= 14);
 	assert.ok(PRINT_TYPOGRAPHY.subtitle.minimumPoints >= 8);
-	assert.ok(PRINT_TYPOGRAPHY.body.minimumPoints >= 8.5);
+	assert.equal(PRINT_TYPOGRAPHY.body.targetPoints, 10);
+	assert.equal(PRINT_TYPOGRAPHY.body.minimumPoints, 7);
 	assert.ok(PRINT_TYPOGRAPHY.stats.minimumPoints >= 8);
 	assert.ok(PRINT_TYPOGRAPHY.statLabel.minimumPoints >= 7.5);
 	assert.ok(PRINT_TYPOGRAPHY.source.minimumPoints >= 7.5);
 	assert.ok(PRINT_TYPOGRAPHY.pageNumber.minimumPoints >= 7.5);
+	assert.ok(PRINT_TYPOGRAPHY.stats.minimumPoints > PRINT_TYPOGRAPHY.body.minimumPoints);
+	assert.ok(
+		PRINT_TYPOGRAPHY.continuationTitle.targetPoints
+			< PRINT_TYPOGRAPHY.title.targetPoints,
+	);
+});
+
+void test('selects comfortable defaults while retaining every legal adaptive body step', () => {
+	assert.equal(selectPreferredBodyFontPoints('A short effect.'), 10);
+	assert.equal(
+		selectPreferredBodyFontPoints('A'.repeat(2_000)),
+		MINIMUM_PRINT_BODY_FONT_POINTS,
+	);
+	assert.deepEqual(getAdaptiveBodyFontCandidates(), [10, 9.5, 9, 8.5, 8, 7.5, 7]);
+});
+
+void test('adaptive fit tries every legal size and selects the largest size at the best page count', async () => {
+	const attempted: number[] = [];
+	const result = await findBestAdaptiveBodyFit(
+		getAdaptiveBodyFontCandidates(),
+		(points) => {
+			attempted.push(points);
+			return Promise.resolve({
+				pageCount: points >= 9 ? 3 : 2,
+				value: `${points} pt`,
+			});
+		},
+	);
+
+	assert.deepEqual(attempted, getAdaptiveBodyFontCandidates());
+	assert.equal(result?.bodyFontPoints, 8.5);
+	assert.equal(result?.pageCount, 2);
+});
+
+void test('adaptive fit reports failure only after exhausting the 7 pt floor', async () => {
+	const attempted: number[] = [];
+	const result = await findBestAdaptiveBodyFit(
+		getAdaptiveBodyFontCandidates(),
+		(points) => {
+			attempted.push(points);
+			return Promise.resolve(undefined);
+		},
+	);
+
+	assert.equal(result, undefined);
+	assert.deepEqual(attempted, [10, 9.5, 9, 8.5, 8, 7.5, 7]);
 });

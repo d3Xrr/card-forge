@@ -94,7 +94,9 @@ void test('promotes Scimitar metadata to labeled structured rows', () => {
 	assert.ok(estimateItemStatsLoad(item, 'compact') > 0);
 	const pages = planItemCardPages(item, { artworkOrientation: 'landscape' });
 	assert.equal(pages.length, 1);
+	assert.equal(pages[0]?.showArtwork, true);
 	assert.equal(pages[0]?.statsPresentation, 'compact');
+	assert.equal(pages[0]?.layout, 'image');
 });
 
 void test('shows structured stats only on the primary page', () => {

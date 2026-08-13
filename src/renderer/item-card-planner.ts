@@ -8,6 +8,7 @@ import type { ArtworkOrientation } from './artwork-orientation';
 import {
 	estimateDescriptionLoad,
 	selectItemCardLayout,
+	selectPreferredBodyFontPoints,
 	type ItemCardLayout,
 } from './item-card-layout';
 import {
@@ -26,7 +27,14 @@ export interface ItemCardPlanOptions {
 	artworkOrientation?: ArtworkOrientation;
 	artworkAvailable?: boolean;
 	capacityScale?: number;
+	bodyFontPoints?: number;
 }
+
+export type ItemCardContentStrategy =
+	| 'full-stats'
+	| 'prose-artwork-compact-stats'
+	| 'prose-compact-stats'
+	| 'prose-only';
 
 interface PlannedPageContent {
 	kind: ItemCardPageKind;
@@ -35,6 +43,7 @@ interface PlannedPageContent {
 	showArtwork: boolean;
 	showStats: boolean;
 	statsPresentation?: ItemStatsPresentation;
+	bodyFontPoints: number;
 	hasUnsplitOverflow: boolean;
 	contentCapacity: number;
 }
@@ -50,13 +59,13 @@ interface PackedBlocks {
 	oversizedPageIndexes: Set<number>;
 }
 
-const PAGE_CAPACITIES: Record<ItemCardLayout | 'continuation' | 'crafting', number> = {
-	image: 9.75,
-	portrait: 10.5,
-	compact: 15,
-	text: 23,
-	continuation: 25,
-	crafting: 24,
+const MINIMUM_BODY_CAPACITIES: Record<ItemCardLayout | 'continuation' | 'crafting', number> = {
+	image: 10.5,
+	portrait: 12,
+	compact: 18,
+	text: 28,
+	continuation: 31,
+	crafting: 29,
 };
 const SPARSE_FINAL_PAGE_THRESHOLD = 0.38;
 const BALANCED_FINAL_PAGE_TARGET = 0.46;
@@ -70,22 +79,29 @@ export function planItemCardPages(
 	const sections = partitionCraftingSection(allBlocks);
 	const artworkAvailable = options.artworkAvailable ?? item.hasImage;
 	const layoutItem = artworkAvailable ? item : { ...item, hasImage: false };
-	const statsPresentation = hasMeaningfulItemStats(item)
-		? allBlocks.length === 0 ? 'full' : 'compact'
-		: undefined;
+	const strategy = selectItemCardContentStrategy(item, artworkAvailable, allBlocks.length > 0);
+	const statsPresentation = getStrategyStatsPresentation(strategy);
+	const bodyFontPoints = clampBodyFontPoints(
+		options.bodyFontPoints ?? selectPreferredBodyFontPoints(item.description),
+	);
+	const typographyCapacityScale = 7 / bodyFontPoints;
 	const primaryLayout = selectPlannerPrimaryLayout(
 		layoutItem,
 		options.artworkOrientation,
 		statsPresentation,
 	);
-	const primaryCapacity = PAGE_CAPACITIES[primaryLayout] * capacityScale;
+	const primaryCapacity = MINIMUM_BODY_CAPACITIES[primaryLayout]
+		* typographyCapacityScale
+		* capacityScale;
 	const primaryContentCapacity = Math.max(
 		1,
 		primaryCapacity - (statsPresentation
 			? estimateItemStatsLoad(item, statsPresentation)
 			: 0),
 	);
-	const continuationCapacity = PAGE_CAPACITIES.continuation * capacityScale;
+	const continuationCapacity = MINIMUM_BODY_CAPACITIES.continuation
+		* typographyCapacityScale
+		* capacityScale;
 	const planned: PlannedPageContent[] = [];
 
 	const combinedLoad = estimateBlocksLoad([...sections.main, ...sections.crafting]);
@@ -97,6 +113,7 @@ export function planItemCardPages(
 			showArtwork: artworkAvailable && primaryLayout !== 'text',
 			showStats: statsPresentation !== undefined,
 			...(statsPresentation ? { statsPresentation } : {}),
+			bodyFontPoints,
 			hasUnsplitOverflow: false,
 			contentCapacity: primaryContentCapacity,
 		});
@@ -109,8 +126,14 @@ export function planItemCardPages(
 			primaryLayout,
 			artworkAvailable,
 			statsPresentation,
+			bodyFontPoints,
 		);
-		appendCraftingPages(planned, sections.crafting, capacityScale);
+		appendCraftingPages(
+			planned,
+			sections.crafting,
+			capacityScale * typographyCapacityScale,
+			bodyFontPoints,
+		);
 	}
 
 	if (planned.length === 0) {
@@ -121,6 +144,7 @@ export function planItemCardPages(
 			showArtwork: artworkAvailable && primaryLayout !== 'text',
 			showStats: statsPresentation !== undefined,
 			...(statsPresentation ? { statsPresentation } : {}),
+			bodyFontPoints,
 			hasUnsplitOverflow: false,
 			contentCapacity: primaryContentCapacity,
 		});
@@ -137,6 +161,7 @@ export function planItemCardPages(
 		title: item.name,
 		blocks: page.blocks,
 		layout: page.layout,
+		bodyFontPoints: page.bodyFontPoints,
 		showArtwork: page.showArtwork,
 		showStats: page.showStats,
 		...(page.statsPresentation
@@ -148,6 +173,22 @@ export function planItemCardPages(
 			: {}),
 		hasUnsplitOverflow: page.hasUnsplitOverflow,
 	}));
+}
+
+export function selectItemCardContentStrategy(
+	item: ItemCardData,
+	artworkAvailable = item.hasImage,
+	hasRulesProse = parseSemanticMarkdown(item.description).length > 0,
+): ItemCardContentStrategy {
+	if (!hasRulesProse && hasMeaningfulItemStats(item)) {
+		return 'full-stats';
+	}
+	if (hasRulesProse && hasMeaningfulItemStats(item)) {
+		return artworkAvailable
+			? 'prose-artwork-compact-stats'
+			: 'prose-compact-stats';
+	}
+	return 'prose-only';
 }
 
 export function balanceSparseFinalPage<T extends BalanceableCardPage>(pages: T[]): void {
@@ -206,6 +247,7 @@ function appendPackedSection(
 	primaryLayout: ItemCardLayout,
 	artworkAvailable: boolean,
 	statsPresentation: ItemStatsPresentation | undefined,
+	bodyFontPoints: number,
 ): void {
 	if (blocks.length === 0) {
 		return;
@@ -220,6 +262,7 @@ function appendPackedSection(
 		showArtwork: artworkAvailable && primaryLayout !== 'text',
 		showStats: statsPresentation !== undefined,
 		...(statsPresentation ? { statsPresentation } : {}),
+		bodyFontPoints,
 		hasUnsplitOverflow: firstPage.oversizedPageIndexes.has(0),
 		contentCapacity: primaryCapacity,
 	});
@@ -238,6 +281,7 @@ function appendPackedSection(
 			layout: 'text',
 			showArtwork: false,
 			showStats: false,
+			bodyFontPoints,
 			hasUnsplitOverflow: continuations.oversizedPageIndexes.has(index),
 			contentCapacity: continuationCapacity,
 		});
@@ -248,12 +292,14 @@ function appendCraftingPages(
 	planned: PlannedPageContent[],
 	blocks: readonly MarkdownBlock[],
 	capacityScale: number,
+	bodyFontPoints: number,
 ): void {
 	if (blocks.length === 0) {
 		return;
 	}
 
-	const packed = packBlocks(blocks, PAGE_CAPACITIES.crafting * capacityScale, false);
+	const craftingCapacity = MINIMUM_BODY_CAPACITIES.crafting * capacityScale;
+	const packed = packBlocks(blocks, craftingCapacity, false);
 	for (const [index, pageBlocks] of packed.pages.entries()) {
 		planned.push({
 			kind: 'crafting',
@@ -261,10 +307,27 @@ function appendCraftingPages(
 			layout: 'text',
 			showArtwork: false,
 			showStats: false,
+			bodyFontPoints,
 			hasUnsplitOverflow: packed.oversizedPageIndexes.has(index),
-			contentCapacity: PAGE_CAPACITIES.crafting * capacityScale,
+			contentCapacity: craftingCapacity,
 		});
 	}
+}
+
+function getStrategyStatsPresentation(
+	strategy: ItemCardContentStrategy,
+): ItemStatsPresentation | undefined {
+	if (strategy === 'full-stats') {
+		return 'full';
+	}
+	return strategy === 'prose-artwork-compact-stats'
+		|| strategy === 'prose-compact-stats'
+		? 'compact'
+		: undefined;
+}
+
+function clampBodyFontPoints(points: number): number {
+	return Math.min(10, Math.max(7, points));
 }
 
 function packBlocks(

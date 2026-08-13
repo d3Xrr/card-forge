@@ -43,7 +43,11 @@ export class ItemCardRenderer {
 	): RenderedItemCard {
 		container.replaceChildren();
 		const { item, layout } = page;
-		const layoutProfile = getItemCardLayoutProfile(layout);
+		const layoutProfile = getItemCardLayoutProfile(
+			layout,
+			page.bodyFontPoints,
+			page.statsPresentation === 'compact',
+		);
 		const card = appendElement(container, 'article', 'ttrpg-card-forge-card');
 		card.dataset.layout = layout;
 		card.dataset.pageKind = page.kind;
@@ -59,13 +63,18 @@ export class ItemCardRenderer {
 			'--ttrpg-card-body-font-size',
 			`${layoutProfile.bodyFontCqw}cqw`,
 		);
+		const usesCompactHeader = page.kind !== 'primary';
 		card.style.setProperty(
 			'--ttrpg-card-title-font-size',
-			formatPrintPointsAsCqw(PRINT_TYPOGRAPHY.title.targetPoints),
+			formatPrintPointsAsCqw(usesCompactHeader
+				? PRINT_TYPOGRAPHY.continuationTitle.targetPoints
+				: PRINT_TYPOGRAPHY.title.targetPoints),
 		);
 		card.style.setProperty(
 			'--ttrpg-card-subtitle-font-size',
-			formatPrintPointsAsCqw(PRINT_TYPOGRAPHY.subtitle.targetPoints),
+			formatPrintPointsAsCqw(usesCompactHeader
+				? PRINT_TYPOGRAPHY.continuationSubtitle.targetPoints
+				: PRINT_TYPOGRAPHY.subtitle.targetPoints),
 		);
 		card.style.setProperty(
 			'--ttrpg-card-stats-font-size',

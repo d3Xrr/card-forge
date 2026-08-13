@@ -18,6 +18,16 @@ export interface ItemCardLayoutProfile {
 
 export const MINIMUM_PRINT_BODY_FONT_POINTS = PRINT_TYPOGRAPHY.body.minimumPoints;
 
+export const ADAPTIVE_BODY_FONT_POINTS = Object.freeze([
+	10,
+	9.5,
+	9,
+	8.5,
+	8,
+	7.5,
+	7,
+] as const);
+
 const LAYOUT_PROFILE_VALUES: Record<
 	ItemCardLayout,
 	{ artworkSharePercent: number; printFontPoints: number }
@@ -99,11 +109,50 @@ export function formatLayoutName(layout: ItemCardLayout): string {
 	return layout.toLocaleUpperCase();
 }
 
-export function getItemCardLayoutProfile(layout: ItemCardLayout): ItemCardLayoutProfile {
+export function selectPreferredBodyFontPoints(markdown: string): number {
+	const load = estimateDescriptionLoad(markdown);
+	if (load <= 6) {
+		return 10;
+	}
+	if (load <= 12) {
+		return 9.5;
+	}
+	if (load <= 18) {
+		return 9;
+	}
+	if (load <= 24) {
+		return 8.5;
+	}
+	if (load <= 32) {
+		return 8;
+	}
+	if (load <= 42) {
+		return 7.5;
+	}
+	return MINIMUM_PRINT_BODY_FONT_POINTS;
+}
+
+export function getAdaptiveBodyFontCandidates(): number[] {
+	return [...ADAPTIVE_BODY_FONT_POINTS];
+}
+
+export function getItemCardLayoutProfile(
+	layout: ItemCardLayout,
+	bodyFontPoints = LAYOUT_PROFILE_VALUES[layout].printFontPoints,
+	usesCompactStats = false,
+): ItemCardLayoutProfile {
 	const values = LAYOUT_PROFILE_VALUES[layout];
+	const safeBodyFontPoints = Math.min(
+		PRINT_TYPOGRAPHY.body.targetPoints,
+		Math.max(MINIMUM_PRINT_BODY_FONT_POINTS, bodyFontPoints),
+	);
+	const artworkSharePercent = layout === 'image' && usesCompactStats
+		? 34
+		: values.artworkSharePercent;
 	return {
-		...values,
-		bodyFontCqw: roundUpCqw(printPointsToCardWidthCqw(values.printFontPoints)),
+		artworkSharePercent,
+		printFontPoints: safeBodyFontPoints,
+		bodyFontCqw: roundUpCqw(printPointsToCardWidthCqw(safeBodyFontPoints)),
 	};
 }
 

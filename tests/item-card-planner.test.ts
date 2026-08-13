@@ -7,6 +7,7 @@ import {
 	estimateBlocksLoad,
 	flattenPageContent,
 	planItemCardPages,
+	selectItemCardContentStrategy,
 } from '../src/renderer/item-card-planner';
 import { getRenderablePageBlocks } from '../src/renderer/item-card-renderer';
 import {
@@ -122,18 +123,85 @@ void test('plans multiple continuation pages for long rules text', () => {
 	assert.ok(pages.slice(1).every((page) => page.kind === 'continuation'));
 });
 
-void test('paginates dense readable body text instead of shrinking below the print floor', () => {
+void test('denser rules can use the legal body floor before adding avoidable pages', () => {
 	const description = Array.from(
 		{ length: 11 },
 		(_, index) => `Rule ${index + 1} explains a substantial condition with enough detail to occupy two readable lines.`,
 	).join('\n\n');
-	const pages = planItemCardPages(createItem({
+	const comfortable = planItemCardPages(createItem({
 		description,
 		hasImage: false,
-	}));
+	}), { bodyFontPoints: 10 });
+	const floor = planItemCardPages(createItem({
+		description,
+		hasImage: false,
+	}), { bodyFontPoints: 7 });
 
-	assert.ok(pages.length > 1);
-	assert.ok(pages.every((page) => page.layout === 'text'));
+	assert.ok(floor.length <= comfortable.length);
+	assert.ok(floor.every((page) => page.layout === 'text'));
+	assert.ok(floor.every((page) => page.bodyFontPoints === 7));
+});
+
+void test('selects content priority without item-name special cases', () => {
+	assert.equal(selectItemCardContentStrategy(createItem({
+		description: '',
+		damage: '1d12 slashing',
+	}), true), 'full-stats');
+	assert.equal(selectItemCardContentStrategy(createItem({
+		description: 'A meaningful magic-item effect.',
+		damage: '1d6 slashing',
+	}), true), 'prose-artwork-compact-stats');
+	assert.equal(selectItemCardContentStrategy(createItem({
+		description: 'A meaningful magic-item effect.',
+		damage: '1d6 slashing',
+		hasImage: false,
+	}), false), 'prose-compact-stats');
+});
+
+void test('keeps a dense text-only magic item exportable in two planned cards at the body floor', () => {
+	const description = Array.from(
+		{ length: 3 },
+		(_, paragraph) => Array.from(
+			{ length: 6 },
+			(__, sentence) => `Condition ${paragraph + 1}.${sentence + 1} explains transport, duration, recovery, and return rules clearly.`,
+		).join(' '),
+	).join('\n\n');
+	const pages = planItemCardPages(createItem({
+		name: 'Dense Rod',
+		description,
+		hasImage: false,
+		weight: 2,
+	}), { bodyFontPoints: 7 });
+
+	assert.equal(pages.length, 2);
+	assert.equal(pages[0]?.statsPresentation, 'compact');
+	assert.ok(pages.every((page) => !page.hasUnsplitOverflow));
+});
+
+void test('keeps an artwork-led ten-row table intact within two planned cards', () => {
+	const rows = Array.from(
+		{ length: 10 },
+		(_, index) => `| Result ${index + 1} | ${index + 1} measures |`,
+	);
+	const description = [
+		'Choose one result from the complete table when the item is activated.',
+		'',
+		'| Result | Maximum |',
+		'| --- | --- |',
+		...rows,
+	].join('\n');
+	const pages = planItemCardPages(createItem({
+		name: 'Table Item',
+		description,
+		weight: 12,
+	}), { artworkOrientation: 'landscape', bodyFontPoints: 8 });
+	const tables = pages.flatMap((page) =>
+		page.blocks.filter((block) => block.type === 'table'),
+	);
+
+	assert.ok(pages.length <= 2);
+	assert.equal(pages[0]?.showArtwork, true);
+	assert.equal(tables.flatMap((table) => table.type === 'table' ? table.rows : []).length, 10);
 });
 
 void test('moves Crafting to a dedicated page as a unit when primary capacity is exceeded', () => {

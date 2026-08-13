@@ -4,6 +4,7 @@ import { createCanonicalMeasurementRoot } from '../models/physical-card-profile'
 import { ArtworkBoundsService } from './artwork-bounds';
 import { classifyArtworkOrientation } from './artwork-orientation';
 import { compactContinuationPages } from './item-card-compactor';
+import { getAdaptiveBodyFontCandidates } from './item-card-layout';
 import {
 	ItemCardRenderer,
 	type ArtworkLoadResult,
@@ -14,10 +15,44 @@ export interface FittedItemCardPlan {
 	pages: ItemCardPage[];
 	artworkResult: ArtworkLoadResult;
 	capacityScale: number;
+	bodyFontPoints: number;
 	unfitPageIndexes: ReadonlySet<number>;
 }
 
 const CAPACITY_SCALES = [1, 0.88, 0.76, 0.66, 0.55] as const;
+
+export interface AdaptiveBodyFit<T> {
+	bodyFontPoints: number;
+	pageCount: number;
+	value: T;
+}
+
+export async function findBestAdaptiveBodyFit<T>(
+	bodyFontPoints: readonly number[],
+	attempt: (points: number) => Promise<{ pageCount: number; value: T } | undefined>,
+): Promise<AdaptiveBodyFit<T> | undefined> {
+	let best: AdaptiveBodyFit<T> | undefined;
+	for (const points of bodyFontPoints) {
+		const result = await attempt(points);
+		if (!result) {
+			continue;
+		}
+		const candidate = { bodyFontPoints: points, ...result };
+		if (!best
+			|| candidate.pageCount < best.pageCount
+			|| (candidate.pageCount === best.pageCount
+				&& candidate.bodyFontPoints > best.bodyFontPoints)) {
+			best = candidate;
+		}
+	}
+	return best;
+}
+
+interface MeasuredFit {
+	pages: ItemCardPage[];
+	capacityScale: number;
+	unfitPageIndexes: ReadonlySet<number>;
+}
 
 export class ItemCardFitService {
 	constructor(
@@ -40,56 +75,42 @@ export class ItemCardFitService {
 		const measurementRoot = createCanonicalMeasurementRoot(document);
 
 		const artworkAvailable = artworkResult.status === 'ready';
-		const artworkStates = [artworkAvailable];
 		let lastPlan: ItemCardPage[] = [];
 		let lastUnfitPageIndexes = new Set<number>();
 		let lastCapacityScale: number = CAPACITY_SCALES[0];
+		let lastBodyFontPoints = getAdaptiveBodyFontCandidates().at(-1) ?? 7;
 		try {
-			for (let artworkAttempt = 0; artworkAttempt < artworkStates.length; artworkAttempt += 1) {
-				const showArtwork = artworkStates[artworkAttempt] ?? false;
-				for (const capacityScale of CAPACITY_SCALES) {
-					const pages = planItemCardPages(item, {
-						artworkOrientation,
-						artworkAvailable: showArtwork,
-						capacityScale,
-					});
-					const unfitPageIndexes = await this.measurePages(
-						measurementRoot,
-						pages,
-						artworkResourcePath,
-					);
-					lastPlan = pages;
-					lastUnfitPageIndexes = unfitPageIndexes;
-					lastCapacityScale = capacityScale;
-					if (unfitPageIndexes.size === 0) {
-						const compactedPages = await this.compactPages(
+			const bodyCandidates = getAdaptiveBodyFontCandidates();
+			const artworkStates = artworkAvailable ? [true, false] : [false];
+			for (const showArtwork of artworkStates) {
+				const fitted = await findBestAdaptiveBodyFit(
+					bodyCandidates,
+					async (bodyFontPoints) => {
+						const measured = await this.findMeasuredFit(
 							measurementRoot,
-							pages,
+							item,
+							showArtwork,
+							bodyFontPoints,
+							artworkOrientation,
 							artworkResourcePath,
+							(state) => {
+								lastPlan = state.pages;
+								lastUnfitPageIndexes = new Set(state.unfitPageIndexes);
+								lastCapacityScale = state.capacityScale;
+								lastBodyFontPoints = bodyFontPoints;
+							},
 						);
-						const compactedUnfitPageIndexes = await this.measurePages(
-							measurementRoot,
-							compactedPages,
-							artworkResourcePath,
-						);
-						if (compactedUnfitPageIndexes.size > 0) {
-							return {
-								pages,
-								artworkResult,
-								capacityScale,
-								unfitPageIndexes,
-							};
-						}
-						return {
-							pages: compactedPages,
-							artworkResult,
-							capacityScale,
-							unfitPageIndexes: compactedUnfitPageIndexes,
-						};
-					}
-				}
-				if (showArtwork && lastUnfitPageIndexes.has(0)) {
-					artworkStates.push(false);
+						return measured
+							? { pageCount: measured.pages.length, value: measured }
+							: undefined;
+					},
+				);
+				if (fitted) {
+					return {
+						...fitted.value,
+						artworkResult,
+						bodyFontPoints: fitted.bodyFontPoints,
+					};
 				}
 			}
 		} finally {
@@ -100,8 +121,60 @@ export class ItemCardFitService {
 			pages: lastPlan,
 			artworkResult,
 			capacityScale: lastCapacityScale,
+			bodyFontPoints: lastBodyFontPoints,
 			unfitPageIndexes: lastUnfitPageIndexes,
 		};
+	}
+
+	private async findMeasuredFit(
+		measurementRoot: HTMLElement,
+		item: ItemCardData,
+		showArtwork: boolean,
+		bodyFontPoints: number,
+		artworkOrientation: ArtworkOrientation | undefined,
+		artworkResourcePath: string | undefined,
+		onMeasured: (fit: MeasuredFit) => void,
+	): Promise<MeasuredFit | undefined> {
+		for (const capacityScale of CAPACITY_SCALES) {
+			const pages = planItemCardPages(item, {
+				artworkOrientation,
+				artworkAvailable: showArtwork,
+				capacityScale,
+				bodyFontPoints,
+			});
+			const unfitPageIndexes = await this.measurePages(
+				measurementRoot,
+				pages,
+				artworkResourcePath,
+			);
+			const measured = { pages, capacityScale, unfitPageIndexes };
+			onMeasured(measured);
+			if (unfitPageIndexes.size > 0) {
+				continue;
+			}
+			if (pages.filter((page) => page.kind === 'continuation').length < 2) {
+				return measured;
+			}
+
+			const compactedPages = await this.compactPages(
+				measurementRoot,
+				pages,
+				artworkResourcePath,
+			);
+			const compactedUnfitPageIndexes = await this.measurePages(
+				measurementRoot,
+				compactedPages,
+				artworkResourcePath,
+			);
+			return compactedUnfitPageIndexes.size > 0
+				? measured
+				: {
+					pages: compactedPages,
+					capacityScale,
+					unfitPageIndexes: compactedUnfitPageIndexes,
+				};
+		}
+		return undefined;
 	}
 
 	private async compactPages(
