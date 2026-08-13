@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
 	ARTWORK_ORIENTATION_RATIO_THRESHOLD,
 	classifyArtworkOrientation,
+	ITEM_ARTWORK_FIT_MODE,
 } from '../src/renderer/artwork-orientation';
 import { parseDescriptionHeading } from '../src/renderer/safe-markdown-renderer';
 import { formatSourceDisplay } from '../src/renderer/source-formatter';
@@ -31,6 +32,10 @@ void test('classifies square-like artwork and handles invalid dimensions', () =>
 	assert.equal(classifyArtworkOrientation(0, 900), undefined);
 	assert.equal(classifyArtworkOrientation(Number.NaN, 900), undefined);
 	assert.equal(ARTWORK_ORIENTATION_RATIO_THRESHOLD, 1.35);
+});
+
+void test('item artwork defaults to preserving the complete image', () => {
+	assert.equal(ITEM_ARTWORK_FIT_MODE, 'contain');
 });
 
 void test('formats Monsters of Drakkenheim sources for card and browser', () => {

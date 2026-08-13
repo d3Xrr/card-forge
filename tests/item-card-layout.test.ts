@@ -24,6 +24,10 @@ void test('selects image layout for artwork with a short description', () => {
 	assert.equal(selectItemCardLayout(createItem()), 'image');
 });
 
+void test('selects portrait layout for tall artwork', () => {
+	assert.equal(selectItemCardLayout(createItem(), 'portrait'), 'portrait');
+});
+
 void test('selects compact layout for a medium structured description', () => {
 	const description = Array.from(
 		{ length: 7 },
@@ -49,7 +53,7 @@ void test('layout load accounts for paragraphs and lists as well as text length'
 });
 
 void test('layout profiles never shrink below the minimum print body size', () => {
-	for (const layout of ['image', 'compact', 'text'] as const) {
+	for (const layout of ['image', 'portrait', 'compact', 'text'] as const) {
 		assert.ok(
 			getItemCardLayoutProfile(layout).printFontPoints
 				>= MINIMUM_PRINT_BODY_FONT_POINTS,

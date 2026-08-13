@@ -1,102 +1,73 @@
+import {
+	parseSemanticMarkdown,
+} from './semantic-markdown';
+import type { MarkdownBlock } from '../models/item-card-page';
+
+export { parseDescriptionHeading } from './semantic-markdown';
+
 export function renderSafeMarkdown(markdown: string, container: HTMLElement): void {
+	renderSafeMarkdownBlocks(parseSemanticMarkdown(markdown), container);
+}
+
+export function renderSafeMarkdownBlocks(
+	blocks: readonly MarkdownBlock[],
+	container: HTMLElement,
+): void {
 	container.replaceChildren();
-	const lines = markdown.replaceAll('\r\n', '\n').split('\n');
-	let index = 0;
-
-	while (index < lines.length) {
-		const line = lines[index] ?? '';
-		if (line.trim().length === 0) {
-			index += 1;
-			continue;
-		}
-
-		const heading = parseDescriptionHeading(line);
-		if (heading) {
-			const tagName = heading.level === 2 ? 'h4' : 'h5';
-			const element = appendElement(
-				container,
-				tagName,
-				'ttrpg-card-forge-card__section-heading',
-			);
-			element.dataset.sourceLevel = String(heading.level);
-			renderInlineMarkdown(heading.text, element);
-			index += 1;
-			continue;
-		}
-
-		const unorderedMatch = matchUnorderedListItem(line);
-		if (unorderedMatch) {
-			const list = appendElement(container, 'ul', 'ttrpg-card-forge-card__list');
-			while (index < lines.length) {
-				const itemText = matchUnorderedListItem(lines[index] ?? '');
-				if (itemText === null) {
-					break;
-				}
-				const listItem = appendElement(list, 'li');
-				renderInlineMarkdown(itemText, listItem);
-				index += 1;
-			}
-			continue;
-		}
-
-		const orderedMatch = matchOrderedListItem(line);
-		if (orderedMatch) {
-			const list = appendElement(container, 'ol', 'ttrpg-card-forge-card__list');
-			while (index < lines.length) {
-				const itemText = matchOrderedListItem(lines[index] ?? '');
-				if (itemText === null) {
-					break;
-				}
-				const listItem = appendElement(list, 'li');
-				renderInlineMarkdown(itemText, listItem);
-				index += 1;
-			}
-			continue;
-		}
-
-		const paragraph = appendElement(container, 'p', 'ttrpg-card-forge-card__paragraph');
-		let paragraphLineCount = 0;
-		while (index < lines.length) {
-			const paragraphLine = lines[index] ?? '';
-			if (
-				paragraphLine.trim().length === 0
-				|| parseDescriptionHeading(paragraphLine) !== null
-				|| matchUnorderedListItem(paragraphLine) !== null
-				|| matchOrderedListItem(paragraphLine) !== null
-			) {
+	for (const block of blocks) {
+		switch (block.type) {
+			case 'heading':
+				renderHeading(block, container);
 				break;
-			}
-
-			if (paragraphLineCount > 0) {
-				paragraph.createEl('br');
-			}
-			renderInlineMarkdown(paragraphLine.trim(), paragraph);
-			paragraphLineCount += 1;
-			index += 1;
+			case 'unordered-list':
+			case 'ordered-list':
+				renderList(block, container);
+				break;
+			case 'paragraph':
+				renderParagraph(block.markdown, container);
+				break;
 		}
 	}
 }
 
-export interface DescriptionHeading {
-	level: 2 | 3;
-	text: string;
+function renderHeading(
+	block: Extract<MarkdownBlock, { type: 'heading' }>,
+	container: HTMLElement,
+): void {
+	const tagName = block.level === 2 ? 'h4' : 'h5';
+	const element = appendElement(
+		container,
+		tagName,
+		'ttrpg-card-forge-card__section-heading',
+	);
+	element.dataset.sourceLevel = String(block.level);
+	renderInlineMarkdown(block.markdown, element);
 }
 
-export function parseDescriptionHeading(line: string): DescriptionHeading | null {
-	const match = line.match(/^\s*(#{2,3})\s+(.+?)\s*#*\s*$/u);
-	if (!match?.[1] || !match[2]) {
-		return null;
+function renderList(
+	block: Extract<MarkdownBlock, { type: 'unordered-list' | 'ordered-list' }>,
+	container: HTMLElement,
+): void {
+	const list = appendElement(
+		container,
+		block.type === 'ordered-list' ? 'ol' : 'ul',
+		'ttrpg-card-forge-card__list',
+	);
+	for (const item of block.items) {
+		const listItem = appendElement(list, 'li');
+		renderInlineMarkdown(item, listItem);
 	}
+}
 
-	const text = match[2].trim();
-	if (text.length === 0) {
-		return null;
+function renderParagraph(markdown: string, container: HTMLElement): void {
+	const paragraph = appendElement(container, 'p', 'ttrpg-card-forge-card__paragraph');
+	const lines = markdown.split('\n');
+	for (const [index, line] of lines.entries()) {
+		if (index > 0) {
+			paragraph.createEl('br');
+		}
+		renderInlineMarkdown(line, paragraph);
 	}
-
-	return {
-		level: match[1].length as 2 | 3,
-		text,
-	};
 }
 
 function renderInlineMarkdown(markdown: string, container: HTMLElement): void {
@@ -125,14 +96,6 @@ function renderInlineMarkdown(markdown: string, container: HTMLElement): void {
 
 		remaining = remaining.slice(match.index + token.length);
 	}
-}
-
-function matchUnorderedListItem(line: string): string | null {
-	return line.match(/^\s*[-+*]\s+(.+)$/u)?.[1] ?? null;
-}
-
-function matchOrderedListItem(line: string): string | null {
-	return line.match(/^\s*\d+[.)]\s+(.+)$/u)?.[1] ?? null;
 }
 
 function appendElement<K extends keyof HTMLElementTagNameMap>(

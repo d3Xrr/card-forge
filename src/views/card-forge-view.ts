@@ -1,6 +1,11 @@
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 
 import type { ItemCardData } from '../models/item';
+import type { ItemCardPage } from '../models/item-card-page';
+import {
+	ItemCardFitService,
+	type FittedItemCardPlan,
+} from '../renderer/item-card-fit-service';
 import {
 	ItemCardRenderer,
 	type ArtworkLoadResult,
@@ -16,18 +21,27 @@ export const CARD_FORGE_VIEW_TYPE = 'ttrpg-card-forge-view';
 
 export class CardForgeView extends ItemView {
 	private readonly cardRenderer = new ItemCardRenderer();
+	private readonly cardFitService = new ItemCardFitService(this.cardRenderer);
 	private searchInput: HTMLInputElement | null = null;
 	private totalCountElement: HTMLElement | null = null;
 	private filteredCountElement: HTMLElement | null = null;
 	private resultsElement: HTMLElement | null = null;
 	private cardHostElement: HTMLElement | null = null;
 	private diagnosticsElement: HTMLElement | null = null;
+	private pageNavigationElement: HTMLElement | null = null;
+	private previousPageButton: HTMLButtonElement | null = null;
+	private nextPageButton: HTMLButtonElement | null = null;
+	private pageLabelElement: HTMLElement | null = null;
 	private openSourceButton: HTMLButtonElement | null = null;
 	private selectedFilePath: string | null = null;
 	private unsubscribeFromIndex: (() => void) | null = null;
 	private overflowFrame: number | null = null;
 	private cardResizeObserver: ResizeObserver | null = null;
 	private previewGeneration = 0;
+	private previewPages: ItemCardPage[] = [];
+	private currentPageIndex = 0;
+	private unfitPageIndexes: ReadonlySet<number> = new Set<number>();
+	private currentArtworkResourcePath: string | undefined;
 
 	constructor(leaf: WorkspaceLeaf, private readonly itemIndex: ItemIndex) {
 		super(leaf);
@@ -94,6 +108,24 @@ export class CardForgeView extends ItemView {
 			text: 'Card preview',
 			cls: 'ttrpg-card-forge__preview-heading',
 		});
+		this.pageNavigationElement = preview.createDiv({
+			cls: 'ttrpg-card-forge__page-navigation',
+			attr: { 'aria-label': 'Card page navigation' },
+		});
+		this.pageNavigationElement.hidden = true;
+		this.previousPageButton = this.pageNavigationElement.createEl('button', {
+			text: '‹',
+			cls: 'ttrpg-card-forge__page-button',
+			attr: { type: 'button', 'aria-label': 'Previous card page' },
+		});
+		this.pageLabelElement = this.pageNavigationElement.createSpan({
+			cls: 'ttrpg-card-forge__page-label',
+		});
+		this.nextPageButton = this.pageNavigationElement.createEl('button', {
+			text: '›',
+			cls: 'ttrpg-card-forge__page-button',
+			attr: { type: 'button', 'aria-label': 'Next card page' },
+		});
 		this.cardHostElement = preview.createDiv({ cls: 'ttrpg-card-forge__card-host' });
 		this.diagnosticsElement = preview.createDiv({ cls: 'ttrpg-card-forge__diagnostics' });
 		this.openSourceButton = preview.createEl('button', {
@@ -103,6 +135,8 @@ export class CardForgeView extends ItemView {
 		});
 
 		this.registerDomEvent(this.searchInput, 'input', () => this.render());
+		this.registerDomEvent(this.previousPageButton, 'click', () => this.showRelativePage(-1));
+		this.registerDomEvent(this.nextPageButton, 'click', () => this.showRelativePage(1));
 		this.registerDomEvent(this.openSourceButton, 'click', () => this.openSelectedItem());
 		this.unsubscribeFromIndex = this.itemIndex.subscribe(() => this.render());
 		this.render();
@@ -125,7 +159,14 @@ export class CardForgeView extends ItemView {
 		this.resultsElement = null;
 		this.cardHostElement = null;
 		this.diagnosticsElement = null;
+		this.pageNavigationElement = null;
+		this.previousPageButton = null;
+		this.nextPageButton = null;
+		this.pageLabelElement = null;
 		this.openSourceButton = null;
+		this.previewPages = [];
+		this.unfitPageIndexes = new Set<number>();
+		this.currentArtworkResourcePath = undefined;
 	}
 
 	private render(): void {
@@ -145,7 +186,11 @@ export class CardForgeView extends ItemView {
 			: formatItemCount(visibleItems.length));
 
 		if (!visibleItems.some((item) => item.filePath === this.selectedFilePath)) {
-			this.selectedFilePath = visibleItems[0]?.filePath ?? null;
+			const nextFilePath = visibleItems[0]?.filePath ?? null;
+			if (nextFilePath !== this.selectedFilePath) {
+				this.selectedFilePath = nextFilePath;
+				this.currentPageIndex = 0;
+			}
 		}
 
 		this.renderItemList(visibleItems, query);
@@ -200,6 +245,7 @@ export class CardForgeView extends ItemView {
 			return;
 		}
 		this.selectedFilePath = filePath;
+		this.currentPageIndex = 0;
 		if (this.resultsElement) {
 			for (const child of Array.from(this.resultsElement.children)) {
 				if (!child.instanceOf(HTMLButtonElement)) {
@@ -230,6 +276,10 @@ export class CardForgeView extends ItemView {
 			.find((item) => item.filePath === this.selectedFilePath);
 		this.cardHostElement.empty();
 		this.diagnosticsElement.empty();
+		this.previewPages = [];
+		this.unfitPageIndexes = new Set<number>();
+		this.currentArtworkResourcePath = undefined;
+		this.updatePageNavigation();
 		this.openSourceButton.toggleAttribute('disabled', !selectedItem);
 
 		if (!selectedItem) {
@@ -241,21 +291,119 @@ export class CardForgeView extends ItemView {
 		}
 
 		const artworkResourcePath = getArtworkResourcePath(this.app, selectedItem);
-		const renderedCard = this.cardRenderer.render(
-			this.cardHostElement,
+		this.cardHostElement.createDiv({
+			cls: 'ttrpg-card-forge__preview-empty',
+			text: 'Planning card pages…',
+		});
+		void this.planAndRenderPreview(
 			selectedItem,
-			artworkResourcePath,
-		);
-		this.renderDiagnostics(
-			selectedItem,
-			renderedCard,
 			artworkResourcePath,
 			previewGeneration,
 		);
 	}
 
-	private renderDiagnostics(
+	private async planAndRenderPreview(
 		item: ItemCardData,
+		artworkResourcePath: string | undefined,
+		previewGeneration: number,
+	): Promise<void> {
+		if (!this.cardHostElement) {
+			return;
+		}
+
+		let fittedPlan: FittedItemCardPlan;
+		try {
+			fittedPlan = await this.cardFitService.fit(
+				this.cardHostElement,
+				item,
+				artworkResourcePath,
+			);
+		} catch {
+			if (previewGeneration === this.previewGeneration && this.cardHostElement) {
+				this.cardHostElement.empty();
+				this.cardHostElement.createDiv({
+					cls: 'ttrpg-card-forge__preview-empty',
+					text: 'Card page planning failed. Rebuild the item index and try again.',
+				});
+			}
+			return;
+		}
+
+		if (previewGeneration !== this.previewGeneration) {
+			return;
+		}
+		this.previewPages = fittedPlan.pages;
+		this.unfitPageIndexes = fittedPlan.unfitPageIndexes;
+		this.currentArtworkResourcePath = artworkResourcePath;
+		this.currentPageIndex = Math.min(
+			this.currentPageIndex,
+			Math.max(0, this.previewPages.length - 1),
+		);
+		this.renderCurrentPage(previewGeneration);
+	}
+
+	private renderCurrentPage(previewGeneration: number): void {
+		if (!this.cardHostElement) {
+			return;
+		}
+		const page = this.previewPages[this.currentPageIndex];
+		if (!page) {
+			return;
+		}
+
+		if (this.overflowFrame !== null) {
+			window.cancelAnimationFrame(this.overflowFrame);
+			this.overflowFrame = null;
+		}
+		this.cardResizeObserver?.disconnect();
+		this.cardResizeObserver = null;
+		this.updatePageNavigation();
+		const renderedCard = this.cardRenderer.render(
+			this.cardHostElement,
+			page,
+			this.currentArtworkResourcePath,
+		);
+		this.renderDiagnostics(
+			page,
+			renderedCard,
+			this.currentArtworkResourcePath,
+			previewGeneration,
+		);
+	}
+
+	private showRelativePage(offset: number): void {
+		const nextIndex = Math.min(
+			Math.max(0, this.currentPageIndex + offset),
+			Math.max(0, this.previewPages.length - 1),
+		);
+		if (nextIndex === this.currentPageIndex) {
+			return;
+		}
+		this.currentPageIndex = nextIndex;
+		this.renderCurrentPage(this.previewGeneration);
+	}
+
+	private updatePageNavigation(): void {
+		if (
+			!this.pageNavigationElement
+			|| !this.previousPageButton
+			|| !this.nextPageButton
+			|| !this.pageLabelElement
+		) {
+			return;
+		}
+
+		const pageCount = this.previewPages.length;
+		this.pageNavigationElement.hidden = pageCount <= 1;
+		this.pageLabelElement.setText(pageCount > 0
+			? `${this.currentPageIndex + 1} / ${pageCount}`
+			: '');
+		this.previousPageButton.disabled = this.currentPageIndex <= 0;
+		this.nextPageButton.disabled = this.currentPageIndex >= pageCount - 1;
+	}
+
+	private renderDiagnostics(
+		page: ItemCardPage,
 		renderedCard: RenderedItemCard,
 		artworkResourcePath: string | undefined,
 		previewGeneration: number,
@@ -273,13 +421,20 @@ export class CardForgeView extends ItemView {
 				return;
 			}
 
-			const hasOverflow = renderedCard.hasOverflow();
+			const measuredUnfit = this.unfitPageIndexes.has(page.pageIndex);
+			const hasOverflow = renderedCard.hasOverflow() || measuredUnfit;
 			const printFont = renderedCard.printFontPoints.toFixed(1);
 			const parts = [
+				`${page.pageCount} card ${page.pageCount === 1 ? 'page' : 'pages'}`,
+				...(page.pageCount > 1
+					? [`Page ${page.pageIndex + 1}/${page.pageCount}`]
+					: []),
 				`Layout: ${formatLayoutName(renderedCard.layout)}`,
-				formatArtworkDiagnostic(item, artworkResourcePath, artworkResult),
+				formatArtworkDiagnostic(page, artworkResourcePath, artworkResult),
 				hasOverflow
-					? `Content overflow at ${printFont} pt; continuation card may be required`
+					? page.hasUnsplitOverflow
+						? 'Unsplit block exceeds one physical card'
+						: `Measured content does not fit at ${printFont} pt`
 					: 'Fits',
 			];
 			this.diagnosticsElement.empty();
@@ -325,12 +480,16 @@ export class CardForgeView extends ItemView {
 }
 
 function formatArtworkDiagnostic(
-	item: ItemCardData,
+	page: ItemCardPage,
 	artworkResourcePath?: string,
 	artworkResult?: ArtworkLoadResult,
 ): string {
+	const { item } = page;
 	if (!item.imagePath) {
 		return 'No artwork';
+	}
+	if (!page.showArtwork) {
+		return 'Artwork omitted';
 	}
 	if (!artworkResourcePath || artworkResult?.status === 'error') {
 		return 'Artwork unavailable';

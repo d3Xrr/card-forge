@@ -1,6 +1,10 @@
 import type { ItemCardData } from '../models/item';
+import type {
+	ArtworkOrientation,
+	ItemCardLayout,
+} from '../models/item-card-page';
 
-export type ItemCardLayout = 'image' | 'compact' | 'text';
+export type { ItemCardLayout } from '../models/item-card-page';
 
 export interface ItemCardLayoutProfile {
 	artworkSharePercent: number;
@@ -22,6 +26,10 @@ const LAYOUT_PROFILE_VALUES: Record<
 		artworkSharePercent: 50,
 		bodyFontCqw: 4.35,
 	},
+	portrait: {
+		artworkSharePercent: 34,
+		bodyFontCqw: 4,
+	},
 	compact: {
 		artworkSharePercent: 27,
 		bodyFontCqw: 4,
@@ -35,9 +43,15 @@ const LAYOUT_PROFILE_VALUES: Record<
 const IMAGE_LAYOUT_MAX_LOAD = 11;
 const COMPACT_LAYOUT_MAX_LOAD = 22;
 
-export function selectItemCardLayout(item: ItemCardData): ItemCardLayout {
+export function selectItemCardLayout(
+	item: ItemCardData,
+	artworkOrientation?: ArtworkOrientation,
+): ItemCardLayout {
 	if (!item.hasImage) {
 		return 'text';
+	}
+	if (artworkOrientation === 'portrait') {
+		return 'portrait';
 	}
 
 	const load = estimateDescriptionLoad(item.description);
