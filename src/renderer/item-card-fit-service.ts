@@ -30,6 +30,7 @@ export interface AdaptiveBodyFit<T> {
 export async function findBestAdaptiveBodyFit<T>(
 	bodyFontPoints: readonly number[],
 	attempt: (points: number) => Promise<{ pageCount: number; value: T } | undefined>,
+	minimumPageCount = 0,
 ): Promise<AdaptiveBodyFit<T> | undefined> {
 	let best: AdaptiveBodyFit<T> | undefined;
 	for (const points of bodyFontPoints) {
@@ -44,8 +45,32 @@ export async function findBestAdaptiveBodyFit<T>(
 				&& candidate.bodyFontPoints > best.bodyFontPoints)) {
 			best = candidate;
 		}
+		if (best.pageCount <= minimumPageCount) {
+			break;
+		}
 	}
 	return best;
+}
+
+export interface ArtworkPriorityFit<T> extends AdaptiveBodyFit<T> {
+	showArtwork: boolean;
+}
+
+export function chooseArtworkPriorityFit<T>(
+	withArtwork: AdaptiveBodyFit<T> | undefined,
+	withoutArtwork: AdaptiveBodyFit<T> | undefined,
+	maximumArtworkPagePenalty = 1,
+): ArtworkPriorityFit<T> | undefined {
+	if (withArtwork
+		&& (!withoutArtwork
+			|| withArtwork.pageCount <= withoutArtwork.pageCount + maximumArtworkPagePenalty)) {
+		return { ...withArtwork, showArtwork: true };
+	}
+	return withoutArtwork
+		? { ...withoutArtwork, showArtwork: false }
+		: withArtwork
+			? { ...withArtwork, showArtwork: true }
+			: undefined;
 }
 
 interface MeasuredFit {
@@ -53,6 +78,11 @@ interface MeasuredFit {
 	capacityScale: number;
 	unfitPageIndexes: ReadonlySet<number>;
 }
+
+type PageMeasurementCache = Map<string, Promise<boolean>>;
+
+const ARTWORK_SHARE_CANDIDATES = [undefined, 20, 16] as const;
+const MAXIMUM_ARTWORK_PAGE_PENALTY = 1;
 
 export class ItemCardFitService {
 	constructor(
@@ -81,37 +111,64 @@ export class ItemCardFitService {
 		let lastBodyFontPoints = getAdaptiveBodyFontCandidates().at(-1) ?? 7;
 		try {
 			const bodyCandidates = getAdaptiveBodyFontCandidates();
-			const artworkStates = artworkAvailable ? [true, false] : [false];
-			for (const showArtwork of artworkStates) {
-				const fitted = await findBestAdaptiveBodyFit(
+			const measurementCache: PageMeasurementCache = new Map();
+			const onMeasured = (bodyFontPoints: number, state: MeasuredFit): void => {
+				lastPlan = state.pages;
+				lastUnfitPageIndexes = new Set(state.unfitPageIndexes);
+				lastCapacityScale = state.capacityScale;
+				lastBodyFontPoints = bodyFontPoints;
+			};
+			const minimumWithoutArtwork = getMinimumPlannedPageCount(
+				item,
+				false,
+				bodyCandidates,
+				artworkOrientation,
+			);
+			const minimumWithArtwork = artworkAvailable
+				? getMinimumPlannedPageCount(
+					item,
+					true,
 					bodyCandidates,
-					async (bodyFontPoints) => {
-						const measured = await this.findMeasuredFit(
-							measurementRoot,
-							item,
-							showArtwork,
-							bodyFontPoints,
-							artworkOrientation,
-							artworkResourcePath,
-							(state) => {
-								lastPlan = state.pages;
-								lastUnfitPageIndexes = new Set(state.unfitPageIndexes);
-								lastCapacityScale = state.capacityScale;
-								lastBodyFontPoints = bodyFontPoints;
-							},
-						);
-						return measured
-							? { pageCount: measured.pages.length, value: measured }
-							: undefined;
-					},
-				);
-				if (fitted) {
-					return {
-						...fitted.value,
-						artworkResult,
-						bodyFontPoints: fitted.bodyFontPoints,
-					};
-				}
+					artworkOrientation,
+				)
+				: Number.POSITIVE_INFINITY;
+			const withArtwork = artworkAvailable
+				? await this.fitArtworkState(
+					measurementRoot,
+					item,
+					true,
+					bodyCandidates,
+					minimumWithArtwork,
+					artworkOrientation,
+					artworkResourcePath,
+					measurementCache,
+					onMeasured,
+				)
+				: undefined;
+			if (withArtwork
+				&& minimumWithoutArtwork <= 2
+				&& withArtwork.pageCount <= minimumWithoutArtwork + MAXIMUM_ARTWORK_PAGE_PENALTY) {
+				return toFittedPlan(withArtwork, artworkResult);
+			}
+
+			const withoutArtwork = await this.fitArtworkState(
+				measurementRoot,
+				item,
+				false,
+				bodyCandidates,
+				minimumWithoutArtwork,
+				artworkOrientation,
+				artworkResourcePath,
+				measurementCache,
+				onMeasured,
+			);
+			const selected = chooseArtworkPriorityFit(
+				withArtwork,
+				withoutArtwork,
+				MAXIMUM_ARTWORK_PAGE_PENALTY,
+			);
+			if (selected) {
+				return toFittedPlan(selected, artworkResult);
 			}
 		} finally {
 			measurementRoot.remove();
@@ -126,6 +183,38 @@ export class ItemCardFitService {
 		};
 	}
 
+	private fitArtworkState(
+		measurementRoot: HTMLElement,
+		item: ItemCardData,
+		showArtwork: boolean,
+		bodyCandidates: readonly number[],
+		minimumPageCount: number,
+		artworkOrientation: ArtworkOrientation | undefined,
+		artworkResourcePath: string | undefined,
+		measurementCache: PageMeasurementCache,
+		onMeasured: (bodyFontPoints: number, fit: MeasuredFit) => void,
+	): Promise<AdaptiveBodyFit<MeasuredFit> | undefined> {
+		return findBestAdaptiveBodyFit(
+			bodyCandidates,
+			async (bodyFontPoints) => {
+				const measured = await this.findMeasuredFit(
+					measurementRoot,
+					item,
+					showArtwork,
+					bodyFontPoints,
+					artworkOrientation,
+					artworkResourcePath,
+					measurementCache,
+					(state) => onMeasured(bodyFontPoints, state),
+				);
+				return measured
+					? { pageCount: measured.pages.length, value: measured }
+					: undefined;
+			},
+			minimumPageCount <= 2 ? minimumPageCount : 0,
+		);
+	}
+
 	private async findMeasuredFit(
 		measurementRoot: HTMLElement,
 		item: ItemCardData,
@@ -133,46 +222,54 @@ export class ItemCardFitService {
 		bodyFontPoints: number,
 		artworkOrientation: ArtworkOrientation | undefined,
 		artworkResourcePath: string | undefined,
+		measurementCache: PageMeasurementCache,
 		onMeasured: (fit: MeasuredFit) => void,
 	): Promise<MeasuredFit | undefined> {
-		for (const capacityScale of CAPACITY_SCALES) {
-			const pages = planItemCardPages(item, {
-				artworkOrientation,
-				artworkAvailable: showArtwork,
-				capacityScale,
-				bodyFontPoints,
-			});
-			const unfitPageIndexes = await this.measurePages(
-				measurementRoot,
-				pages,
-				artworkResourcePath,
-			);
-			const measured = { pages, capacityScale, unfitPageIndexes };
-			onMeasured(measured);
-			if (unfitPageIndexes.size > 0) {
-				continue;
-			}
-			if (pages.filter((page) => page.kind === 'continuation').length < 2) {
-				return measured;
-			}
-
-			const compactedPages = await this.compactPages(
-				measurementRoot,
-				pages,
-				artworkResourcePath,
-			);
-			const compactedUnfitPageIndexes = await this.measurePages(
-				measurementRoot,
-				compactedPages,
-				artworkResourcePath,
-			);
-			return compactedUnfitPageIndexes.size > 0
-				? measured
-				: {
-					pages: compactedPages,
+		const artworkShares = showArtwork ? ARTWORK_SHARE_CANDIDATES : [undefined];
+		for (const artworkSharePercent of artworkShares) {
+			for (const capacityScale of CAPACITY_SCALES) {
+				const pages = planItemCardPages(item, {
+					artworkOrientation,
+					artworkAvailable: showArtwork,
 					capacityScale,
-					unfitPageIndexes: compactedUnfitPageIndexes,
-				};
+					bodyFontPoints,
+					...(artworkSharePercent !== undefined ? { artworkSharePercent } : {}),
+				});
+				const unfitPageIndexes = await this.measurePages(
+					measurementRoot,
+					pages,
+					artworkResourcePath,
+					measurementCache,
+				);
+				const measured = { pages, capacityScale, unfitPageIndexes };
+				onMeasured(measured);
+				if (unfitPageIndexes.size > 0) {
+					continue;
+				}
+				if (pages.filter((page) => page.kind === 'continuation').length < 2) {
+					return measured;
+				}
+
+				const compactedPages = await this.compactPages(
+					measurementRoot,
+					pages,
+					artworkResourcePath,
+					measurementCache,
+				);
+				const compactedUnfitPageIndexes = await this.measurePages(
+					measurementRoot,
+					compactedPages,
+					artworkResourcePath,
+					measurementCache,
+				);
+				return compactedUnfitPageIndexes.size > 0
+					? measured
+					: {
+						pages: compactedPages,
+						capacityScale,
+						unfitPageIndexes: compactedUnfitPageIndexes,
+					};
+			}
 		}
 		return undefined;
 	}
@@ -180,7 +277,8 @@ export class ItemCardFitService {
 	private async compactPages(
 		measurementRoot: HTMLElement,
 		pages: readonly ItemCardPage[],
-		artworkResourcePath?: string,
+		artworkResourcePath: string | undefined,
+		measurementCache: PageMeasurementCache,
 	): Promise<ItemCardPage[]> {
 		const continuationCount = pages.filter(
 			(page) => page.kind === 'continuation',
@@ -191,12 +289,29 @@ export class ItemCardFitService {
 
 		return compactContinuationPages(
 			pages,
-			async (page) => !(await this.measurePage(
+			async (page) => !(await this.measurePageCached(
 				measurementRoot,
 				page,
 				artworkResourcePath,
+				measurementCache,
 			)),
 		);
+	}
+
+	private measurePageCached(
+		measurementRoot: HTMLElement,
+		page: ItemCardPage,
+		artworkResourcePath: string | undefined,
+		measurementCache: PageMeasurementCache,
+	): Promise<boolean> {
+		const key = createItemCardPageMeasurementKey(page);
+		let result = measurementCache.get(key);
+		if (!result) {
+			result = this.measurePage(measurementRoot, page, artworkResourcePath);
+			measurementCache.set(key, result);
+			void result.catch(() => measurementCache.delete(key));
+		}
+		return result;
 	}
 
 	private async measurePage(
@@ -220,16 +335,69 @@ export class ItemCardFitService {
 	private async measurePages(
 		measurementRoot: HTMLElement,
 		pages: readonly ItemCardPage[],
-		artworkResourcePath?: string,
+		artworkResourcePath: string | undefined,
+		measurementCache: PageMeasurementCache,
 	): Promise<Set<number>> {
 		const unfitPageIndexes = new Set<number>();
 		for (const page of pages) {
-			if (await this.measurePage(measurementRoot, page, artworkResourcePath)) {
+			if (await this.measurePageCached(
+				measurementRoot,
+				page,
+				artworkResourcePath,
+				measurementCache,
+			)) {
 				unfitPageIndexes.add(page.pageIndex);
 			}
 		}
 		return unfitPageIndexes;
 	}
+}
+
+function toFittedPlan(
+	fit: AdaptiveBodyFit<MeasuredFit>,
+	artworkResult: ArtworkLoadResult,
+): FittedItemCardPlan {
+	return {
+		...fit.value,
+		artworkResult,
+		bodyFontPoints: fit.bodyFontPoints,
+	};
+}
+
+function getMinimumPlannedPageCount(
+	item: ItemCardData,
+	showArtwork: boolean,
+	bodyCandidates: readonly number[],
+	artworkOrientation: ArtworkOrientation | undefined,
+): number {
+	return bodyCandidates.reduce((minimum, bodyFontPoints) => Math.min(
+		minimum,
+		planItemCardPages(item, {
+			artworkOrientation,
+			artworkAvailable: showArtwork,
+			bodyFontPoints,
+		}).length,
+	), Number.POSITIVE_INFINITY);
+}
+
+export function createItemCardPageMeasurementKey(page: ItemCardPage): string {
+	return JSON.stringify({
+		filePath: page.item.filePath,
+		pageIndex: page.pageIndex,
+		pageCount: page.pageCount,
+		kind: page.kind,
+		title: page.title,
+		blocks: page.blocks,
+		layout: page.layout,
+		bodyFontPoints: page.bodyFontPoints,
+		artworkSharePercent: page.artworkSharePercent,
+		showArtwork: page.showArtwork,
+		showStats: page.showStats,
+		statsPresentation: page.statsPresentation,
+		showSource: page.showSource,
+		artworkOrientation: page.artworkOrientation,
+		hasUnsplitOverflow: page.hasUnsplitOverflow,
+	});
 }
 
 function loadArtworkOrientation(

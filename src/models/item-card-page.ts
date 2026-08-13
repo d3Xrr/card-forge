@@ -45,6 +45,7 @@ export interface ItemCardPage {
 	blocks: MarkdownBlock[];
 	layout: ItemCardLayout;
 	bodyFontPoints?: number;
+	artworkSharePercent?: number;
 	showArtwork: boolean;
 	showStats: boolean;
 	statsPresentation?: ItemStatsPresentation;

@@ -140,15 +140,19 @@ export function getItemCardLayoutProfile(
 	layout: ItemCardLayout,
 	bodyFontPoints = LAYOUT_PROFILE_VALUES[layout].printFontPoints,
 	usesCompactStats = false,
+	artworkShareOverride?: number,
 ): ItemCardLayoutProfile {
 	const values = LAYOUT_PROFILE_VALUES[layout];
 	const safeBodyFontPoints = Math.min(
 		PRINT_TYPOGRAPHY.body.targetPoints,
 		Math.max(MINIMUM_PRINT_BODY_FONT_POINTS, bodyFontPoints),
 	);
-	const artworkSharePercent = layout === 'image' && usesCompactStats
+	const defaultArtworkSharePercent = layout === 'image' && usesCompactStats
 		? 34
 		: values.artworkSharePercent;
+	const artworkSharePercent = artworkShareOverride === undefined
+		? defaultArtworkSharePercent
+		: Math.min(defaultArtworkSharePercent, Math.max(16, artworkShareOverride));
 	return {
 		artworkSharePercent,
 		printFontPoints: safeBodyFontPoints,

@@ -204,6 +204,29 @@ void test('keeps an artwork-led ten-row table intact within two planned cards', 
 	assert.equal(tables.flatMap((table) => table.type === 'table' ? table.rows : []).length, 10);
 });
 
+void test('propagates a reduced but useful artwork share without changing page content', () => {
+	const item = createItem({
+		description: Array.from(
+			{ length: 16 },
+			(_, index) => `Property ${index + 1} describes a distinctive artifact feature.`,
+		).join('\n\n'),
+		weight: 7,
+	});
+	const standard = planItemCardPages(item, {
+		artworkOrientation: 'landscape',
+		bodyFontPoints: 8,
+	});
+	const reducedArtwork = planItemCardPages(item, {
+		artworkOrientation: 'landscape',
+		bodyFontPoints: 8,
+		artworkSharePercent: 20,
+	});
+
+	assert.equal(reducedArtwork[0]?.showArtwork, true);
+	assert.equal(reducedArtwork[0]?.artworkSharePercent, 20);
+	assert.equal(flattenPageContent(reducedArtwork), flattenPageContent(standard));
+});
+
 void test('moves Crafting to a dedicated page as a unit when primary capacity is exceeded', () => {
 	const craftingItems = Array.from(
 		{ length: 8 },

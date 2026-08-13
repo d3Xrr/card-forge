@@ -16,6 +16,8 @@ export interface ItemStatRow {
 	values: string[];
 }
 
+const COMPACT_ATOMIC_VALUE_MAX_LENGTH = 26;
+
 export function getItemStats(item: ItemCardData): ItemStats {
 	return {
 		...(item.damage ? { damage: item.damage } : {}),
@@ -105,9 +107,31 @@ export function renderItemStats(
 		stat.createDiv({ cls: 'ttrpg-card-forge-card__stat-label', text: row.label });
 		const values = stat.createDiv({ cls: 'ttrpg-card-forge-card__stat-values' });
 		for (const value of row.values) {
-			values.createDiv({ text: value });
+			const valueElement = values.createDiv({
+				cls: 'ttrpg-card-forge-card__stat-value',
+				text: value,
+			});
+			valueElement.toggleClass(
+				'is-atomic',
+				presentation === 'compact' && isCompactAtomicStatValue(row.label, value),
+			);
 		}
 	}
+}
+
+export function isCompactAtomicStatValue(label: string, value: string): boolean {
+	const normalized = value.trim();
+	if (normalized.length === 0 || normalized.length > COMPACT_ATOMIC_VALUE_MAX_LENGTH) {
+		return false;
+	}
+	if (label === 'Damage') {
+		return /^\d+d\d+(?:\s*[+-]\s*\d+)?\s+[\p{L}-]+$/iu.test(normalized);
+	}
+	return label === 'Properties'
+		|| label === 'Mastery'
+		|| label === 'Range'
+		|| label === 'Weight'
+		|| label === 'Cost';
 }
 
 export function formatItemWeight(weight: number): string {

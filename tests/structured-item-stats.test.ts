@@ -8,6 +8,7 @@ import {
 	estimateItemStatsLoad,
 	formatItemWeight,
 	hasMeaningfulItemStats,
+	isCompactAtomicStatValue,
 } from '../src/renderer/structured-item-stats';
 
 function createItem(overrides: Partial<ItemCardData> = {}): ItemCardData {
@@ -97,6 +98,21 @@ void test('promotes Scimitar metadata to labeled structured rows', () => {
 	assert.equal(pages[0]?.showArtwork, true);
 	assert.equal(pages[0]?.statsPresentation, 'compact');
 	assert.equal(pages[0]?.layout, 'image');
+});
+
+void test('keeps compact damage and short metadata groups atomic when practical', () => {
+	assert.equal(isCompactAtomicStatValue('Damage', '1d4 piercing'), true);
+	assert.equal(isCompactAtomicStatValue('Damage', '2d8 force'), true);
+	assert.equal(isCompactAtomicStatValue('Properties', 'Finesse Â· Light'), true);
+	assert.equal(isCompactAtomicStatValue('Mastery', 'Nick'), true);
+	assert.equal(
+		isCompactAtomicStatValue('Damage', 'One-handed: 1d8 slashing'),
+		false,
+	);
+	assert.equal(
+		isCompactAtomicStatValue('Properties', 'A very long collection of properties that needs wrapping'),
+		false,
+	);
 });
 
 void test('shows structured stats only on the primary page', () => {

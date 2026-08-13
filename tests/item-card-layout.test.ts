@@ -10,7 +10,11 @@ import {
 	selectItemCardLayout,
 	selectPreferredBodyFontPoints,
 } from '../src/renderer/item-card-layout';
-import { findBestAdaptiveBodyFit } from '../src/renderer/item-card-fit-service';
+import {
+	chooseArtworkPriorityFit,
+	createItemCardPageMeasurementKey,
+	findBestAdaptiveBodyFit,
+} from '../src/renderer/item-card-fit-service';
 import { PRINT_TYPOGRAPHY } from '../src/renderer/print-typography';
 
 function createItem(overrides: Partial<ItemCardData> = {}): ItemCardData {
@@ -72,6 +76,8 @@ void test('layout profiles never shrink below the minimum print body size', () =
 	assert.equal(getItemCardLayoutProfile('text', 8).printFontPoints, 8);
 	assert.equal(getItemCardLayoutProfile('image', 10).artworkSharePercent, 43);
 	assert.equal(getItemCardLayoutProfile('image', 10, true).artworkSharePercent, 34);
+	assert.equal(getItemCardLayoutProfile('compact', 8, true, 20).artworkSharePercent, 20);
+	assert.equal(getItemCardLayoutProfile('compact', 8, true, 10).artworkSharePercent, 16);
 });
 
 void test('keeps title, subtitle, stats, and source floors independent from adaptive body type', () => {
@@ -111,11 +117,20 @@ void test('adaptive fit tries every legal size and selects the largest size at t
 				value: `${points} pt`,
 			});
 		},
+		2,
 	);
 
-	assert.deepEqual(attempted, getAdaptiveBodyFontCandidates());
+	assert.deepEqual(attempted, [10, 9.5, 9, 8.5]);
 	assert.equal(result?.bodyFontPoints, 8.5);
 	assert.equal(result?.pageCount, 2);
+	const exhaustive = await findBestAdaptiveBodyFit(
+		getAdaptiveBodyFontCandidates(),
+		(points) => Promise.resolve({
+			pageCount: points >= 9 ? 3 : 2,
+			value: `${points} pt`,
+		}),
+	);
+	assert.deepEqual(result, exhaustive);
 });
 
 void test('adaptive fit reports failure only after exhausting the 7 pt floor', async () => {
@@ -130,4 +145,42 @@ void test('adaptive fit reports failure only after exhausting the 7 pt floor', a
 
 	assert.equal(result, undefined);
 	assert.deepEqual(attempted, [10, 9.5, 9, 8.5, 8, 7.5, 7]);
+});
+
+void test('prefers artwork when its page penalty is reasonable', () => {
+	const withArtwork = { bodyFontPoints: 8, pageCount: 5, value: 'art' };
+	const withoutArtwork = { bodyFontPoints: 8.5, pageCount: 4, value: 'plain' };
+	assert.deepEqual(chooseArtworkPriorityFit(withArtwork, withoutArtwork), {
+		...withArtwork,
+		showArtwork: true,
+	});
+	assert.deepEqual(chooseArtworkPriorityFit(
+		{ ...withArtwork, pageCount: 6 },
+		withoutArtwork,
+	), {
+		...withoutArtwork,
+		showArtwork: false,
+	});
+});
+
+void test('measurement keys reuse identical pages but distinguish render inputs', () => {
+	const page = {
+		item: createItem(),
+		pageIndex: 0,
+		pageCount: 1,
+		kind: 'primary' as const,
+		title: 'Test Item',
+		blocks: [{ type: 'paragraph' as const, markdown: 'A short rules paragraph.' }],
+		layout: 'image' as const,
+		bodyFontPoints: 9,
+		artworkSharePercent: 20,
+		showArtwork: true,
+		showStats: false,
+		showSource: true,
+		hasUnsplitOverflow: false,
+	};
+	const key = createItemCardPageMeasurementKey(page);
+	assert.equal(createItemCardPageMeasurementKey(structuredClone(page)), key);
+	assert.notEqual(createItemCardPageMeasurementKey({ ...page, bodyFontPoints: 8.5 }), key);
+	assert.notEqual(createItemCardPageMeasurementKey({ ...page, artworkSharePercent: 16 }), key);
 });

@@ -47,6 +47,7 @@ export class ItemCardRenderer {
 			layout,
 			page.bodyFontPoints,
 			page.statsPresentation === 'compact',
+			page.artworkSharePercent,
 		);
 		const card = appendElement(container, 'article', 'ttrpg-card-forge-card');
 		card.dataset.layout = layout;

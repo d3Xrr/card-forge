@@ -131,7 +131,12 @@ export class CardForgeView extends ItemView {
 		this.buildQueue(workspace);
 
 		if (this.searchInput) {
-			this.registerDomEvent(this.searchInput, 'input', () => this.render());
+			this.registerDomEvent(this.searchInput, 'input', () => {
+				const selectionChanged = this.renderBrowser();
+				if (selectionChanged) {
+					this.renderPreview();
+				}
+			});
 		}
 		if (this.previousPageButton) {
 			this.registerDomEvent(this.previousPageButton, 'click', () => this.showRelativePage(-1));
@@ -304,9 +309,16 @@ export class CardForgeView extends ItemView {
 	}
 
 	private render(): void {
+		this.renderBrowser();
+		this.renderPreview();
+		this.renderQueue();
+	}
+
+	private renderBrowser(): boolean {
 		if (!this.resultsElement || !this.totalCountElement || !this.filteredCountElement) {
-			return;
+			return false;
 		}
+		const previousSelection = this.selectedFilePath;
 		const allItems = this.itemIndex.getItems();
 		const query = this.searchInput?.value.trim().toLocaleLowerCase() ?? '';
 		const visibleItems = query
@@ -320,8 +332,7 @@ export class CardForgeView extends ItemView {
 			this.currentPageIndex = 0;
 		}
 		this.renderItemList(visibleItems, query);
-		this.renderPreview();
-		this.renderQueue();
+		return this.selectedFilePath !== previousSelection;
 	}
 
 	private renderItemList(items: readonly ItemCardData[], query: string): void {
@@ -364,7 +375,8 @@ export class CardForgeView extends ItemView {
 		}
 		this.selectedFilePath = filePath;
 		this.currentPageIndex = 0;
-		this.render();
+		this.renderBrowser();
+		this.renderPreview();
 	}
 
 	private renderPreview(): void {

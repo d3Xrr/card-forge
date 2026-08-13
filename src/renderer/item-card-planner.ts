@@ -28,6 +28,7 @@ export interface ItemCardPlanOptions {
 	artworkAvailable?: boolean;
 	capacityScale?: number;
 	bodyFontPoints?: number;
+	artworkSharePercent?: number;
 }
 
 export type ItemCardContentStrategy =
@@ -44,6 +45,7 @@ interface PlannedPageContent {
 	showStats: boolean;
 	statsPresentation?: ItemStatsPresentation;
 	bodyFontPoints: number;
+	artworkSharePercent?: number;
 	hasUnsplitOverflow: boolean;
 	contentCapacity: number;
 }
@@ -114,6 +116,9 @@ export function planItemCardPages(
 			showStats: statsPresentation !== undefined,
 			...(statsPresentation ? { statsPresentation } : {}),
 			bodyFontPoints,
+			...(options.artworkSharePercent !== undefined
+				? { artworkSharePercent: options.artworkSharePercent }
+				: {}),
 			hasUnsplitOverflow: false,
 			contentCapacity: primaryContentCapacity,
 		});
@@ -127,6 +132,7 @@ export function planItemCardPages(
 			artworkAvailable,
 			statsPresentation,
 			bodyFontPoints,
+			options.artworkSharePercent,
 		);
 		appendCraftingPages(
 			planned,
@@ -145,6 +151,9 @@ export function planItemCardPages(
 			showStats: statsPresentation !== undefined,
 			...(statsPresentation ? { statsPresentation } : {}),
 			bodyFontPoints,
+			...(options.artworkSharePercent !== undefined
+				? { artworkSharePercent: options.artworkSharePercent }
+				: {}),
 			hasUnsplitOverflow: false,
 			contentCapacity: primaryContentCapacity,
 		});
@@ -162,6 +171,9 @@ export function planItemCardPages(
 		blocks: page.blocks,
 		layout: page.layout,
 		bodyFontPoints: page.bodyFontPoints,
+		...(page.artworkSharePercent !== undefined
+			? { artworkSharePercent: page.artworkSharePercent }
+			: {}),
 		showArtwork: page.showArtwork,
 		showStats: page.showStats,
 		...(page.statsPresentation
@@ -248,6 +260,7 @@ function appendPackedSection(
 	artworkAvailable: boolean,
 	statsPresentation: ItemStatsPresentation | undefined,
 	bodyFontPoints: number,
+	artworkSharePercent: number | undefined,
 ): void {
 	if (blocks.length === 0) {
 		return;
@@ -263,6 +276,7 @@ function appendPackedSection(
 		showStats: statsPresentation !== undefined,
 		...(statsPresentation ? { statsPresentation } : {}),
 		bodyFontPoints,
+		...(artworkSharePercent !== undefined ? { artworkSharePercent } : {}),
 		hasUnsplitOverflow: firstPage.oversizedPageIndexes.has(0),
 		contentCapacity: primaryCapacity,
 	});
