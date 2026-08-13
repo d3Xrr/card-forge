@@ -6,13 +6,20 @@ import {
 } from 'obsidian';
 
 import type TTRPGCardForgePlugin from './main';
+import { DEFAULT_PDF_EXPORT_FOLDER } from './export/vault-pdf-storage';
 
 export interface CardForgeSettings {
 	itemFolder: string;
+	pdfExportFolder: string;
+	showCropMarks: boolean;
+	openPdfAfterExport: boolean;
 }
 
 export const DEFAULT_SETTINGS: CardForgeSettings = {
 	itemFolder: '2. Mechanics/items',
+	pdfExportFolder: DEFAULT_PDF_EXPORT_FOLDER,
+	showCropMarks: true,
+	openPdfAfterExport: false,
 };
 
 export class CardForgeSettingTab extends PluginSettingTab {
@@ -34,13 +41,41 @@ export class CardForgeSettingTab extends PluginSettingTab {
 					await this.plugin.updateItemFolder(value);
 				}));
 
+		new Setting(containerEl)
+			.setName('PDF export folder')
+			.setDesc('Vault-relative folder where generated PDF files are saved.')
+			.addText((text) => text
+				.setPlaceholder(DEFAULT_SETTINGS.pdfExportFolder)
+				.setValue(this.plugin.settings.pdfExportFolder)
+				.onChange(async (value) => {
+					await this.plugin.updatePdfExportFolder(value);
+				}));
+
+		new Setting(containerEl)
+			.setName('Show crop marks')
+			.setDesc('Draw thin cut marks outside each physical card. No bleed is added.')
+			.addToggle((toggle) => toggle
+				.setValue(this.plugin.settings.showCropMarks)
+				.onChange(async (value) => {
+					await this.plugin.updateShowCropMarks(value);
+				}));
+
+		new Setting(containerEl)
+			.setName('Open PDF after export')
+			.setDesc('Open the newly generated PDF in an Obsidian tab after saving it.')
+			.addToggle((toggle) => toggle
+				.setValue(this.plugin.settings.openPdfAfterExport)
+				.onChange(async (value) => {
+					await this.plugin.updateOpenPdfAfterExport(value);
+				}));
+
 		const rebuildSetting = new Setting(containerEl)
 			.setName('Rebuild item index')
 			.setDesc('Rescan the configured folder using Obsidian’s metadata cache.');
 		this.addRebuildButton(rebuildSetting);
 	}
 
-	getSettingDefinitions(): SettingDefinitionItem<'itemFolder'>[] {
+	getSettingDefinitions(): SettingDefinitionItem<keyof CardForgeSettings>[] {
 		return [
 			{
 				name: 'Item folder',
@@ -53,6 +88,34 @@ export class CardForgeSettingTab extends PluginSettingTab {
 				},
 			},
 			{
+				name: 'PDF export folder',
+				desc: 'Vault-relative folder where generated PDF files are saved.',
+				control: {
+					type: 'folder',
+					key: 'pdfExportFolder',
+					defaultValue: DEFAULT_SETTINGS.pdfExportFolder,
+					placeholder: DEFAULT_SETTINGS.pdfExportFolder,
+				},
+			},
+			{
+				name: 'Show crop marks',
+				desc: 'Draw thin cut marks outside each physical card. No bleed is added.',
+				control: {
+					type: 'toggle',
+					key: 'showCropMarks',
+					defaultValue: DEFAULT_SETTINGS.showCropMarks,
+				},
+			},
+			{
+				name: 'Open PDF after export',
+				desc: 'Open the newly generated PDF in Obsidian after saving it.',
+				control: {
+					type: 'toggle',
+					key: 'openPdfAfterExport',
+					defaultValue: DEFAULT_SETTINGS.openPdfAfterExport,
+				},
+			},
+			{
 				name: 'Rebuild item index',
 				desc: 'Rescan the configured folder using Obsidian’s metadata cache.',
 				render: (setting) => this.addRebuildButton(setting),
@@ -61,12 +124,20 @@ export class CardForgeSettingTab extends PluginSettingTab {
 	}
 
 	getControlValue(key: string): unknown {
-		return key === 'itemFolder' ? this.plugin.settings.itemFolder : undefined;
+		return key in this.plugin.settings
+			? this.plugin.settings[key as keyof CardForgeSettings]
+			: undefined;
 	}
 
 	async setControlValue(key: string, value: unknown): Promise<void> {
 		if (key === 'itemFolder' && typeof value === 'string') {
 			await this.plugin.updateItemFolder(value);
+		} else if (key === 'pdfExportFolder' && typeof value === 'string') {
+			await this.plugin.updatePdfExportFolder(value);
+		} else if (key === 'showCropMarks' && typeof value === 'boolean') {
+			await this.plugin.updateShowCropMarks(value);
+		} else if (key === 'openPdfAfterExport' && typeof value === 'boolean') {
+			await this.plugin.updateOpenPdfAfterExport(value);
 		}
 	}
 

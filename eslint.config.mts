@@ -38,7 +38,7 @@ export default defineConfig(
 		rules: {
 			'obsidianmd/ui/sentence-case': ['warn', {
 				brands: ['TTRPG Card Forge', 'Card Forge', 'Obsidian'],
-				acronyms: ['TTRPG', 'CLI'],
+				acronyms: ['TTRPG', 'CLI', 'PDF', 'A4'],
 				enforceCamelCaseLower: true,
 			}],
 		},

@@ -2,6 +2,11 @@ import { Notice, Plugin, TAbstractFile, TFile, WorkspaceLeaf } from 'obsidian';
 
 import { ItemIndex, type ItemIndexResult } from './services/item-index';
 import {
+	deserializePrintQueue,
+	PrintQueueService,
+	type PrintQueueEntry,
+} from './models/print-queue';
+import {
 	DEFAULT_SETTINGS,
 	CardForgeSettingTab,
 	type CardForgeSettings,
@@ -13,15 +18,29 @@ const INDEX_REBUILD_DELAY_MS = 350;
 export default class TTRPGCardForgePlugin extends Plugin {
 	settings: CardForgeSettings = DEFAULT_SETTINGS;
 	itemIndex!: ItemIndex;
+	printQueue!: PrintQueueService;
 	private rebuildTimer: number | null = null;
+	private unsubscribeFromQueue: (() => void) | null = null;
+	private saveChain: Promise<void> = Promise.resolve();
 
 	async onload(): Promise<void> {
-		await this.loadSettings();
+		const savedQueue = await this.loadPluginData();
 		this.itemIndex = new ItemIndex(this.app);
+		this.printQueue = new PrintQueueService(savedQueue);
+		this.unsubscribeFromQueue = this.printQueue.subscribe(() => {
+			void this.persistPluginData().catch((error: unknown) => {
+				console.error('TTRPG Card Forge: could not persist print queue', error);
+			});
+		});
 
 		this.registerView(
 			CARD_FORGE_VIEW_TYPE,
-			(leaf: WorkspaceLeaf) => new CardForgeView(leaf, this.itemIndex),
+			(leaf: WorkspaceLeaf) => new CardForgeView(
+				leaf,
+				this.itemIndex,
+				this.printQueue,
+				() => this.settings,
+			),
 		);
 
 		this.addRibbonIcon('layers-3', 'Open TTRPG Card Forge', () => {
@@ -68,6 +87,8 @@ export default class TTRPGCardForgePlugin extends Plugin {
 	}
 
 	onunload(): void {
+		this.unsubscribeFromQueue?.();
+		this.unsubscribeFromQueue = null;
 		if (this.rebuildTimer !== null) {
 			window.clearTimeout(this.rebuildTimer);
 			this.rebuildTimer = null;
@@ -88,8 +109,24 @@ export default class TTRPGCardForgePlugin extends Plugin {
 
 	async updateItemFolder(itemFolder: string): Promise<void> {
 		this.settings.itemFolder = itemFolder.trim();
-		await this.saveData(this.settings);
+		await this.persistPluginData();
 		this.queueIndexRebuild();
+	}
+
+	async updatePdfExportFolder(pdfExportFolder: string): Promise<void> {
+		this.settings.pdfExportFolder = pdfExportFolder.trim()
+			|| DEFAULT_SETTINGS.pdfExportFolder;
+		await this.persistPluginData();
+	}
+
+	async updateShowCropMarks(showCropMarks: boolean): Promise<void> {
+		this.settings.showCropMarks = showCropMarks;
+		await this.persistPluginData();
+	}
+
+	async updateOpenPdfAfterExport(openPdfAfterExport: boolean): Promise<void> {
+		this.settings.openPdfAfterExport = openPdfAfterExport;
+		await this.persistPluginData();
 	}
 
 	async rebuildItemIndex(): Promise<ItemIndexResult> {
@@ -129,8 +166,32 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		return folder.length > 0 && path.startsWith(`${folder}/`);
 	}
 
-	private async loadSettings(): Promise<void> {
-		const savedSettings = await this.loadData() as Partial<CardForgeSettings> | null;
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, savedSettings ?? {});
+	private async loadPluginData(): Promise<PrintQueueEntry[]> {
+		const saved = await this.loadData() as (
+			Partial<CardForgeSettings> & { printQueue?: unknown }
+		) | null;
+		this.settings = {
+			itemFolder: typeof saved?.itemFolder === 'string'
+				? saved.itemFolder
+				: DEFAULT_SETTINGS.itemFolder,
+			pdfExportFolder: typeof saved?.pdfExportFolder === 'string'
+				? saved.pdfExportFolder
+				: DEFAULT_SETTINGS.pdfExportFolder,
+			showCropMarks: typeof saved?.showCropMarks === 'boolean'
+				? saved.showCropMarks
+				: DEFAULT_SETTINGS.showCropMarks,
+			openPdfAfterExport: typeof saved?.openPdfAfterExport === 'boolean'
+				? saved.openPdfAfterExport
+				: DEFAULT_SETTINGS.openPdfAfterExport,
+		};
+		return deserializePrintQueue(saved?.printQueue);
+	}
+
+	private persistPluginData(): Promise<void> {
+		this.saveChain = this.saveChain.catch(() => undefined).then(() => this.saveData({
+			...this.settings,
+			printQueue: this.printQueue.serialize(),
+		}));
+		return this.saveChain;
 	}
 }

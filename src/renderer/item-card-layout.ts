@@ -1,4 +1,5 @@
 import type { ItemCardData } from '../models/item';
+import { PHYSICAL_CARD_PROFILE } from '../models/physical-card-profile';
 import type {
 	ArtworkOrientation,
 	ItemCardLayout,
@@ -12,7 +13,6 @@ export interface ItemCardLayoutProfile {
 	printFontPoints: number;
 }
 
-const CARD_WIDTH_MM = 63.5;
 export const MINIMUM_PRINT_BODY_FONT_POINTS = 7;
 const MINIMUM_BODY_FONT_CQW = roundUpCqw(
 	pointsToCardWidthCqw(MINIMUM_PRINT_BODY_FONT_POINTS),
@@ -109,11 +109,11 @@ export function getItemCardLayoutProfile(layout: ItemCardLayout): ItemCardLayout
 
 function pointsToCardWidthCqw(points: number): number {
 	const millimeters = points * 25.4 / 72;
-	return millimeters / CARD_WIDTH_MM * 100;
+	return millimeters / PHYSICAL_CARD_PROFILE.widthMm * 100;
 }
 
 function cardWidthCqwToPoints(cqw: number): number {
-	const millimeters = CARD_WIDTH_MM * cqw / 100;
+	const millimeters = PHYSICAL_CARD_PROFILE.widthMm * cqw / 100;
 	return millimeters / 25.4 * 72;
 }
 

@@ -1,5 +1,6 @@
 import type { ItemCardData } from '../models/item';
 import type { ArtworkOrientation, ItemCardPage } from '../models/item-card-page';
+import { createCanonicalMeasurementRoot } from '../models/physical-card-profile';
 import { ArtworkBoundsService } from './artwork-bounds';
 import { classifyArtworkOrientation } from './artwork-orientation';
 import { compactContinuationPages } from './item-card-compactor';
@@ -25,21 +26,18 @@ export class ItemCardFitService {
 	) {}
 
 	async fit(
-		measurementContainer: HTMLElement,
+		document: Document,
 		item: ItemCardData,
 		artworkResourcePath?: string,
 	): Promise<FittedItemCardPlan> {
 		const artworkResult = await loadArtworkOrientation(
-			measurementContainer.ownerDocument,
+			document,
 			item,
 			artworkResourcePath,
 			this.artworkBounds,
 		);
 		const artworkOrientation = getReadyOrientation(artworkResult);
-		const measurementRoot = measurementContainer.createDiv({
-			cls: 'ttrpg-card-forge__measurement',
-			attr: { 'aria-hidden': 'true' },
-		});
+		const measurementRoot = createCanonicalMeasurementRoot(document);
 
 		const artworkAvailable = artworkResult.status === 'ready';
 		const artworkStates = [artworkAvailable];
