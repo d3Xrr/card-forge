@@ -87,6 +87,53 @@ void test('normalizes encoded paths and linked property lists', () => {
 	assert.equal(isSupportedArtworkPath('/items/img/item.svg'), false);
 });
 
+void test('normalizes complete mundane weapon statistics', () => {
+	const greataxe = parseItemFrontmatter('greataxe.md', {
+		cssclasses: ['json5e-item'],
+		itemDmg: '1d12 slashing',
+		itemProp: 'Heavy, Two-Handed',
+		itemCost: '30 gp',
+		itemWeight: 7,
+		itemMastery: 'Cleave',
+	});
+	assert.deepEqual(greataxe?.properties, ['Heavy', 'Two-Handed']);
+	assert.equal(greataxe?.damage, '1d12 slashing');
+	assert.equal(greataxe?.mastery, 'Cleave');
+	assert.equal(greataxe?.cost, '30 gp');
+	assert.equal(greataxe?.weight, 7);
+});
+
+void test('normalizes two-handed damage and range', () => {
+	const battleaxe = parseItemFrontmatter('battleaxe.md', {
+		cssclasses: ['json5e-item'],
+		itemDmg: '1d8 slashing',
+		itemDmg2h: '1d10 slashing',
+		itemRange: '20/60',
+		itemProp: ['Versatile', 'Thrown'],
+		itemCost: '10 gp',
+		itemWeight: 4,
+		itemMastery: '[Topple](topple.md)',
+	});
+	assert.equal(battleaxe?.damageTwoHanded, '1d10 slashing');
+	assert.equal(battleaxe?.range, '20/60');
+	assert.deepEqual(battleaxe?.properties, ['Versatile', 'Thrown']);
+	assert.equal(battleaxe?.mastery, 'Topple');
+});
+
+void test('removes nested one-handed and two-handed CLI summary lines', () => {
+	const markdown = `# Battleaxe
+*Weapon, martial weapon*
+
+- **Damage**:
+  - One-handed: 1d8 slashing
+  - Two-handed: 1d10 slashing
+- **Properties**: Versatile
+- **Mastery**: Topple
+- **Cost**: 10 gp
+- **Weight**: 4 lb.`;
+	assert.equal(parseItemDescription(markdown, 'Weapon, martial weapon').description, '');
+});
+
 void test('strips CLI boilerplate and retains only item rules prose', () => {
 	const markdown = `---
 name: Scimitar of Speed

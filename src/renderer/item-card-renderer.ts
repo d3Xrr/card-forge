@@ -1,5 +1,6 @@
 import type { ItemCardData } from '../models/item';
 import type { ItemCardPage } from '../models/item-card-page';
+import { ArtworkBoundsService } from './artwork-bounds';
 import {
 	classifyArtworkOrientation,
 	ITEM_ARTWORK_FIT_MODE,
@@ -12,6 +13,7 @@ import {
 } from './item-card-layout';
 import { renderSafeMarkdownBlocks } from './safe-markdown-renderer';
 import { formatSourceDisplay } from './source-formatter';
+import { renderItemStats } from './structured-item-stats';
 
 export type ArtworkLoadResult =
 	| { status: 'ready'; orientation: ArtworkOrientation }
@@ -28,6 +30,8 @@ export interface RenderedItemCard {
 }
 
 export class ItemCardRenderer {
+	constructor(private readonly artworkBounds: ArtworkBoundsService = new ArtworkBoundsService()) {}
+
 	render(
 		container: HTMLElement,
 		page: ItemCardPage,
@@ -76,14 +80,23 @@ export class ItemCardRenderer {
 
 		const content = appendElement(card, 'div', 'ttrpg-card-forge-card__content');
 		const artworkReady = page.showArtwork && artworkResourcePath
-			? renderArtwork(content, card, item, artworkResourcePath)
+			? renderArtwork(
+				content,
+				card,
+				item,
+				artworkResourcePath,
+				this.artworkBounds,
+			)
 			: Promise.resolve<ArtworkLoadResult>({ status: 'not-rendered' });
 
 		const body = appendElement(content, 'section', 'ttrpg-card-forge-card__body');
-		const description = appendElement(body, 'div', 'ttrpg-card-forge-card__description');
-		if (page.blocks.length > 0) {
-			renderSafeMarkdownBlocks(page.blocks, description);
-		} else {
+		const renderableBlocks = getRenderablePageBlocks(page);
+		let description: HTMLElement | undefined;
+		if (renderableBlocks.length > 0) {
+			description = appendElement(body, 'div', 'ttrpg-card-forge-card__description');
+			renderSafeMarkdownBlocks(renderableBlocks, description);
+		} else if (!page.showStats) {
+			description = appendElement(body, 'div', 'ttrpg-card-forge-card__description');
 			appendElement(
 				description,
 				'p',
@@ -92,11 +105,8 @@ export class ItemCardRenderer {
 			);
 		}
 
-		if (page.kind === 'primary' && layout !== 'text') {
-			const metrics = buildMetricLine(item);
-			if (metrics) {
-				appendElement(body, 'div', 'ttrpg-card-forge-card__metrics', metrics);
-			}
+		if (page.showStats && page.statsPresentation) {
+			renderItemStats(body, item, page.statsPresentation);
 		}
 
 		const footer = appendElement(card, 'footer', 'ttrpg-card-forge-card__footer');
@@ -120,10 +130,24 @@ export class ItemCardRenderer {
 			printFontPoints: layoutProfile.printFontPoints,
 			artworkReady,
 			hasOverflow: () =>
-				description.scrollHeight > description.clientHeight + 1
+				Boolean(description
+					&& description.scrollHeight > description.clientHeight + 1)
 				|| card.scrollHeight > card.clientHeight + 1,
 		};
 	}
+}
+
+export function getRenderablePageBlocks(page: ItemCardPage): ItemCardPage['blocks'] {
+	const firstBlock = page.blocks[0];
+	if (
+		page.kind === 'crafting'
+		&& firstBlock?.type === 'heading'
+		&& firstBlock.level === 2
+		&& firstBlock.markdown.trim().toLocaleLowerCase() === 'crafting'
+	) {
+		return page.blocks.slice(1);
+	}
+	return page.blocks;
 }
 
 function renderArtwork(
@@ -131,6 +155,7 @@ function renderArtwork(
 	card: HTMLElement,
 	item: ItemCardData,
 	artworkResourcePath: string,
+	artworkBounds: ArtworkBoundsService,
 ): Promise<ArtworkLoadResult> {
 	const artwork = appendElement(content, 'figure', 'ttrpg-card-forge-card__artwork');
 	const image = appendElement(artwork, 'img');
@@ -141,15 +166,23 @@ function renderArtwork(
 
 	return new Promise((resolve) => {
 		image.addEventListener('load', () => {
-			const orientation = classifyArtworkOrientation(image.naturalWidth, image.naturalHeight);
-			if (!orientation) {
-				card.dataset.artworkOrientation = 'unknown';
-				resolve({ status: 'invalid-dimensions' });
-				return;
-			}
+			void artworkBounds.getBounds(image, artworkResourcePath).then((bounds) => {
+				const normalized = card.closest('.ttrpg-card-forge__measurement') === null
+					&& artworkBounds.applyVisibleBounds(image, artwork, bounds);
+				card.toggleClass('ttrpg-card-forge-card--artwork-normalized', normalized);
+				const orientation = classifyArtworkOrientation(
+					bounds?.width ?? image.naturalWidth,
+					bounds?.height ?? image.naturalHeight,
+				);
+				if (!orientation) {
+					card.dataset.artworkOrientation = 'unknown';
+					resolve({ status: 'invalid-dimensions' });
+					return;
+				}
 
-			card.dataset.artworkOrientation = orientation;
-			resolve({ status: 'ready', orientation });
+				card.dataset.artworkOrientation = orientation;
+				resolve({ status: 'ready', orientation });
+			});
 		}, { once: true });
 		image.addEventListener('error', () => {
 			artwork.remove();
@@ -181,17 +214,6 @@ function buildIdentityLine(item: ItemCardData): string | undefined {
 	}
 	if (item.attunement) {
 		parts.push('Requires attunement');
-	}
-	return parts.length > 0 ? parts.join(' · ') : undefined;
-}
-
-function buildMetricLine(item: ItemCardData): string | undefined {
-	const parts: string[] = [];
-	if (item.damage) {
-		parts.push(item.damage);
-	}
-	if (item.mastery) {
-		parts.push(`Mastery: ${item.mastery}`);
 	}
 	return parts.length > 0 ? parts.join(' · ') : undefined;
 }

@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf } from 'obsidian';
 
 import type { ItemCardData } from '../models/item';
 import type { ItemCardPage } from '../models/item-card-page';
+import { ArtworkBoundsService } from '../renderer/artwork-bounds';
 import {
 	ItemCardFitService,
 	type FittedItemCardPlan,
@@ -20,8 +21,12 @@ import type { ItemIndex } from '../services/item-index';
 export const CARD_FORGE_VIEW_TYPE = 'ttrpg-card-forge-view';
 
 export class CardForgeView extends ItemView {
-	private readonly cardRenderer = new ItemCardRenderer();
-	private readonly cardFitService = new ItemCardFitService(this.cardRenderer);
+	private readonly artworkBounds = new ArtworkBoundsService();
+	private readonly cardRenderer = new ItemCardRenderer(this.artworkBounds);
+	private readonly cardFitService = new ItemCardFitService(
+		this.cardRenderer,
+		this.artworkBounds,
+	);
 	private searchInput: HTMLInputElement | null = null;
 	private totalCountElement: HTMLElement | null = null;
 	private filteredCountElement: HTMLElement | null = null;

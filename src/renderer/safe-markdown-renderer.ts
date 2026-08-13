@@ -23,9 +23,35 @@ export function renderSafeMarkdownBlocks(
 			case 'ordered-list':
 				renderList(block, container);
 				break;
+			case 'table':
+				renderTable(block, container);
+				break;
 			case 'paragraph':
 				renderParagraph(block.markdown, container);
 				break;
+		}
+	}
+}
+
+function renderTable(
+	block: Extract<MarkdownBlock, { type: 'table' }>,
+	container: HTMLElement,
+): void {
+	const table = appendElement(container, 'table', 'ttrpg-card-forge-card__table');
+	const head = appendElement(table, 'thead');
+	const headerRow = appendElement(head, 'tr');
+	for (const header of block.headers) {
+		const cell = appendElement(headerRow, 'th');
+		cell.scope = 'col';
+		renderInlineMarkdown(header, cell);
+	}
+
+	const body = appendElement(table, 'tbody');
+	for (const row of block.rows) {
+		const tableRow = appendElement(body, 'tr');
+		for (const value of row) {
+			const cell = appendElement(tableRow, 'td');
+			renderInlineMarkdown(value, cell);
 		}
 	}
 }

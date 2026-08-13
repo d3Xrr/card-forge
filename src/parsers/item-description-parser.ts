@@ -12,10 +12,12 @@ const SUMMARY_LABELS = new Set([
 	'damage 2-handed',
 	'damage two-handed',
 	'mastery',
+	'one-handed',
 	'properties',
 	'range',
 	'strength',
 	'type',
+	'two-handed',
 	'value',
 	'weight',
 ]);

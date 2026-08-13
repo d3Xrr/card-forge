@@ -7,7 +7,8 @@ export type ItemCardLayout = 'image' | 'portrait' | 'compact' | 'text';
 export type MarkdownBlock =
 	| MarkdownParagraphBlock
 	| MarkdownHeadingBlock
-	| MarkdownListBlock;
+	| MarkdownListBlock
+	| MarkdownTableBlock;
 
 export interface MarkdownParagraphBlock {
 	type: 'paragraph';
@@ -25,6 +26,14 @@ export interface MarkdownListBlock {
 	items: string[];
 }
 
+export interface MarkdownTableBlock {
+	type: 'table';
+	headers: string[];
+	rows: string[][];
+}
+
+export type ItemStatsPresentation = 'compact' | 'full';
+
 export type ItemCardPageKind = 'primary' | 'continuation' | 'crafting';
 
 export interface ItemCardPage {
@@ -36,6 +45,8 @@ export interface ItemCardPage {
 	blocks: MarkdownBlock[];
 	layout: ItemCardLayout;
 	showArtwork: boolean;
+	showStats: boolean;
+	statsPresentation?: ItemStatsPresentation;
 	showSource: boolean;
 	artworkOrientation?: ArtworkOrientation;
 	hasUnsplitOverflow: boolean;

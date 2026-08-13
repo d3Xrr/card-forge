@@ -10,8 +10,11 @@ export interface ItemCardData {
 	attunement?: boolean;
 	source?: string;
 	damage?: string;
+	damageTwoHanded?: string;
+	range?: string;
 	properties?: string[];
 	mastery?: string;
+	cost?: string;
 	weight?: number;
 	rawTags: string[];
 }

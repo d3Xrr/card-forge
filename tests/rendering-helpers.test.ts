@@ -61,6 +61,13 @@ void test('formats the 2024 Dungeon Master’s Guide source and preserves pages'
 	assert.equal(formatSourceDisplay('xdmg', undefined, 'compact'), "DMG '24");
 });
 
+void test('formats the 2024 Player’s Handbook source and preserves pages', () => {
+	assert.equal(
+		formatSourceDisplay('xphb', "Player's Handbook (2024) p. 215"),
+		"PHB '24 · p. 215",
+	);
+});
+
 void test('source formatting falls back to readable source text or identifiers', () => {
 	assert.equal(
 		formatSourceDisplay('third-party', 'Third Party Almanac pp. 40–42'),

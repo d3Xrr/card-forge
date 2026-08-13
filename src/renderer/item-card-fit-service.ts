@@ -1,5 +1,6 @@
 import type { ItemCardData } from '../models/item';
 import type { ArtworkOrientation, ItemCardPage } from '../models/item-card-page';
+import { ArtworkBoundsService } from './artwork-bounds';
 import { classifyArtworkOrientation } from './artwork-orientation';
 import {
 	ItemCardRenderer,
@@ -17,7 +18,10 @@ export interface FittedItemCardPlan {
 const CAPACITY_SCALES = [1, 0.88, 0.76, 0.66, 0.55] as const;
 
 export class ItemCardFitService {
-	constructor(private readonly renderer: ItemCardRenderer) {}
+	constructor(
+		private readonly renderer: ItemCardRenderer,
+		private readonly artworkBounds: ArtworkBoundsService = new ArtworkBoundsService(),
+	) {}
 
 	async fit(
 		measurementContainer: HTMLElement,
@@ -28,6 +32,7 @@ export class ItemCardFitService {
 			measurementContainer.ownerDocument,
 			item,
 			artworkResourcePath,
+			this.artworkBounds,
 		);
 		const artworkOrientation = getReadyOrientation(artworkResult);
 		const measurementRoot = measurementContainer.createDiv({
@@ -36,32 +41,38 @@ export class ItemCardFitService {
 		});
 
 		const artworkAvailable = artworkResult.status === 'ready';
-		let lastPlan = planItemCardPages(item, {
-			artworkOrientation,
-			artworkAvailable,
-		});
+		const artworkStates = [artworkAvailable];
+		let lastPlan: ItemCardPage[] = [];
 		let lastUnfitPageIndexes = new Set<number>();
+		let lastCapacityScale: number = CAPACITY_SCALES[0];
 		try {
-			for (const capacityScale of CAPACITY_SCALES) {
-				const pages = planItemCardPages(item, {
-					artworkOrientation,
-					artworkAvailable,
-					capacityScale,
-				});
-				const unfitPageIndexes = await this.measurePages(
-					measurementRoot,
-					pages,
-					artworkResourcePath,
-				);
-				lastPlan = pages;
-				lastUnfitPageIndexes = unfitPageIndexes;
-				if (unfitPageIndexes.size === 0) {
-					return {
-						pages,
-						artworkResult,
+			for (let artworkAttempt = 0; artworkAttempt < artworkStates.length; artworkAttempt += 1) {
+				const showArtwork = artworkStates[artworkAttempt] ?? false;
+				for (const capacityScale of CAPACITY_SCALES) {
+					const pages = planItemCardPages(item, {
+						artworkOrientation,
+						artworkAvailable: showArtwork,
 						capacityScale,
-						unfitPageIndexes,
-					};
+					});
+					const unfitPageIndexes = await this.measurePages(
+						measurementRoot,
+						pages,
+						artworkResourcePath,
+					);
+					lastPlan = pages;
+					lastUnfitPageIndexes = unfitPageIndexes;
+					lastCapacityScale = capacityScale;
+					if (unfitPageIndexes.size === 0) {
+						return {
+							pages,
+							artworkResult,
+							capacityScale,
+							unfitPageIndexes,
+						};
+					}
+				}
+				if (showArtwork && lastUnfitPageIndexes.has(0)) {
+					artworkStates.push(false);
 				}
 			}
 		} finally {
@@ -71,7 +82,7 @@ export class ItemCardFitService {
 		return {
 			pages: lastPlan,
 			artworkResult,
-			capacityScale: CAPACITY_SCALES.at(-1) ?? 0.55,
+			capacityScale: lastCapacityScale,
 			unfitPageIndexes: lastUnfitPageIndexes,
 		};
 	}
@@ -102,6 +113,7 @@ function loadArtworkOrientation(
 	document: Document,
 	item: ItemCardData,
 	artworkResourcePath?: string,
+	artworkBounds: ArtworkBoundsService = new ArtworkBoundsService(),
 ): Promise<ArtworkLoadResult> {
 	if (!item.hasImage || !artworkResourcePath) {
 		return Promise.resolve({ status: 'not-rendered' });
@@ -114,21 +126,26 @@ function loadArtworkOrientation(
 	image.loading = 'eager';
 	return new Promise((resolve) => {
 		image.addEventListener('load', () => {
-			const width = image.naturalWidth;
-			const height = image.naturalHeight;
-			if (width <= 0 || height <= 0) {
+			void artworkBounds.getBounds(image, artworkResourcePath).then((bounds) => {
+				const width = image.naturalWidth;
+				const height = image.naturalHeight;
+				if (width <= 0 || height <= 0) {
+					image.remove();
+					resolve({ status: 'invalid-dimensions' });
+					return;
+				}
+				const orientation = classifyArtworkOrientation(
+					bounds?.width ?? width,
+					bounds?.height ?? height,
+				);
+				if (!orientation) {
+					image.remove();
+					resolve({ status: 'invalid-dimensions' });
+					return;
+				}
 				image.remove();
-				resolve({ status: 'invalid-dimensions' });
-				return;
-			}
-			const orientation = classifyArtworkOrientation(width, height);
-			if (!orientation) {
-				image.remove();
-				resolve({ status: 'invalid-dimensions' });
-				return;
-			}
-			image.remove();
-			resolve({ status: 'ready', orientation });
+				resolve({ status: 'ready', orientation });
+			});
 		}, { once: true });
 		image.addEventListener('error', () => {
 			image.remove();

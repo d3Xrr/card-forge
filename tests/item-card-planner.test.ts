@@ -3,9 +3,12 @@ import test from 'node:test';
 
 import type { ItemCardData } from '../src/models/item';
 import {
+	balanceSparseFinalPage,
+	estimateBlocksLoad,
 	flattenPageContent,
 	planItemCardPages,
 } from '../src/renderer/item-card-planner';
+import { getRenderablePageBlocks } from '../src/renderer/item-card-renderer';
 import {
 	parseSemanticMarkdown,
 	partitionCraftingSection,
@@ -47,6 +50,31 @@ void test('extracts semantic paragraphs, headings, and lists', () => {
 		},
 		{ type: 'ordered-list', items: ['First step', 'Second step'] },
 	]);
+});
+
+void test('recognizes Markdown tables and removes standalone Obsidian block IDs', () => {
+	const blocks = parseSemanticMarkdown([
+		'| Liquid | Max. Amount |',
+		'| --- | --- |',
+		'| Acid | 8 ounces |',
+		'| Water \\| salt | 12 gallons |',
+		'^alchemy-jug-liquids',
+	].join('\n'));
+
+	assert.deepEqual(blocks, [{
+		type: 'table',
+		headers: ['Liquid', 'Max. Amount'],
+		rows: [
+			['Acid', '8 ounces'],
+			['Water | salt', '12 gallons'],
+		],
+	}]);
+	assert.ok(blocks.every((block) => block.type !== 'paragraph'));
+});
+
+void test('preserves caret characters in prose while removing only standalone block IDs', () => {
+	const blocks = parseSemanticMarkdown('The formula uses x^2 in prose.\n\n^print-anchor');
+	assert.deepEqual(blocks, [{ type: 'paragraph', markdown: 'The formula uses x^2 in prose.' }]);
 });
 
 void test('detects Crafting as a structural heading section', () => {
@@ -123,6 +151,49 @@ void test('moves Crafting to a dedicated page as a unit when primary capacity is
 			: undefined,
 		'Crafting',
 	);
+	assert.notEqual(getRenderablePageBlocks(pages[1]).at(0)?.type, 'heading');
+});
+
+void test('retains a Crafting heading when it remains on a normal primary page', () => {
+	const pages = planItemCardPages(createItem({
+		description: 'A short effect.\n\n## Crafting\n\nUse one crystal.',
+	}), { artworkOrientation: 'landscape' });
+	assert.equal(pages.length, 1);
+	assert.ok(getRenderablePageBlocks(pages[0]!).some(
+		(block) => block.type === 'heading' && block.markdown === 'Crafting',
+	));
+});
+
+void test('splits oversized tables only between rows and repeats headers', () => {
+	const rows = Array.from(
+		{ length: 42 },
+		(_, index) => `| Liquid ${index + 1} | ${index + 1} gallons |`,
+	);
+	const description = [
+		'| Liquid | Max. Amount |',
+		'| --- | --- |',
+		...rows,
+		'^alchemy-jug-liquids',
+	].join('\n');
+	const pages = planItemCardPages(createItem({
+		description,
+		hasImage: false,
+	}), { capacityScale: 0.55 });
+	const tables = pages.flatMap((page) =>
+		page.blocks.filter((block) => block.type === 'table'),
+	);
+
+	assert.ok(tables.length > 1);
+	assert.ok(tables.every((table) =>
+		table.type === 'table'
+		&& table.headers.join('|') === 'Liquid|Max. Amount'),
+	);
+	const renderedRows = tables.flatMap((table) => table.type === 'table' ? table.rows : []);
+	assert.equal(renderedRows.length, 42);
+	assert.deepEqual(
+		renderedRows.map((row) => row[0]),
+		Array.from({ length: 42 }, (_, index) => `Liquid ${index + 1}`),
+	);
 });
 
 void test('represents all input content exactly once across planned pages', () => {
@@ -164,6 +235,74 @@ void test('keeps unsafe-to-split inline Markdown intact and flags the exceptiona
 	assert.equal(pages[0]?.blocks.length, 1);
 	assert.equal(pages[0]?.hasUnsplitOverflow, true);
 	assert.equal(flattenPageContent(pages), description);
+});
+
+void test('balances a sparse final page by moving whole trailing blocks in order', () => {
+	const first = { type: 'paragraph', markdown: 'A'.repeat(170) } as const;
+	const second = { type: 'paragraph', markdown: 'B'.repeat(170) } as const;
+	const finalBlock = { type: 'paragraph', markdown: 'Final.' } as const;
+	const pages = [
+		{ kind: 'primary' as const, blocks: [first, second], contentCapacity: 20 },
+		{ kind: 'continuation' as const, blocks: [finalBlock], contentCapacity: 20 },
+	];
+
+	balanceSparseFinalPage(pages);
+	assert.deepEqual(pages[0]?.blocks, [first]);
+	assert.deepEqual(pages[1]?.blocks, [second, finalBlock]);
+	assert.ok(estimateBlocksLoad(pages[1].blocks) <= pages[1].contentCapacity);
+	assert.equal(
+		pages.flatMap((page) => page.blocks).map((block) => block.markdown).join(''),
+		`${first.markdown}${second.markdown}${finalBlock.markdown}`,
+	);
+});
+
+void test('balancing never introduces overflow or changes an already reasonable split', () => {
+	const large = { type: 'paragraph', markdown: 'L'.repeat(420) } as const;
+	const sparse = { type: 'paragraph', markdown: 'End.' } as const;
+	const overflowRisk = [
+		{ kind: 'primary' as const, blocks: [sparse, large], contentCapacity: 20 },
+		{ kind: 'continuation' as const, blocks: [sparse], contentCapacity: 10 },
+	];
+	balanceSparseFinalPage(overflowRisk);
+	assert.equal(overflowRisk[0]?.blocks.length, 2);
+	assert.equal(overflowRisk[1]?.blocks.length, 1);
+
+	const alreadyBalanced = [
+		{ kind: 'primary' as const, blocks: [sparse, large], contentCapacity: 20 },
+		{
+			kind: 'continuation' as const,
+			blocks: [{ type: 'paragraph' as const, markdown: 'F'.repeat(330) }],
+			contentCapacity: 20,
+		},
+	];
+	const before = structuredClone(alreadyBalanced);
+	balanceSparseFinalPage(alreadyBalanced);
+	assert.deepEqual(alreadyBalanced, before);
+});
+
+void test('table fragments remain valid after final-page balancing', () => {
+	const headers = ['Liquid', 'Amount'];
+	const firstTable = { type: 'table' as const, headers, rows: [['Acid', '8 oz']] };
+	const finalTable = { type: 'table' as const, headers, rows: [['Oil', '1 quart']] };
+	const pages = [
+		{
+			kind: 'continuation' as const,
+			blocks: [{ type: 'paragraph' as const, markdown: 'Intro.' }, firstTable],
+			contentCapacity: 20,
+		},
+		{ kind: 'continuation' as const, blocks: [finalTable], contentCapacity: 20 },
+	];
+	balanceSparseFinalPage(pages);
+	const tables = pages.flatMap((page) =>
+		page.blocks.filter((block) => block.type === 'table'),
+	);
+	assert.ok(tables.every((table) =>
+		table.type === 'table' && table.headers.join('|') === headers.join('|')),
+	);
+	assert.deepEqual(
+		tables.flatMap((table) => table.type === 'table' ? table.rows : []),
+		[['Acid', '8 oz'], ['Oil', '1 quart']],
+	);
 });
 
 function normalizeWhitespace(value: string): string {

@@ -227,7 +227,8 @@
 	width: 400px;
 }
 
-.ttrpg-card-forge__orientation-probe {
+.ttrpg-card-forge__orientation-probe,
+.ttrpg-card-forge__artwork-analysis {
 	position: fixed;
 	left: -10000px;
 	width: 1px;
@@ -411,13 +412,18 @@
 	content: "";
 }
 
-.ttrpg-card-forge-card__artwork img {
+.ttrpg-card-forge-card__artwork img,
+.ttrpg-card-forge-card__normalized-artwork {
 	display: block;
 	width: 100%;
 	height: 100%;
 	margin: 0;
 	object-fit: contain;
 	object-position: center;
+}
+
+.ttrpg-card-forge-card__artwork img[hidden] {
+	display: none;
 }
 
 .ttrpg-card-forge-card[data-layout="portrait"] .ttrpg-card-forge-card__content {
@@ -519,6 +525,80 @@
 .ttrpg-card-forge-card__list li {
 	margin: 0 0 0.25em;
 	padding-inline-start: 0.1em;
+}
+
+.ttrpg-card-forge-card__table {
+	width: 100%;
+	margin: 0 0 0.72em;
+	border-collapse: collapse;
+	color: inherit;
+	font: inherit;
+	font-size: 0.88em;
+	line-height: 1.18;
+	table-layout: fixed;
+}
+
+.ttrpg-card-forge-card__table th,
+.ttrpg-card-forge-card__table td {
+	min-width: 0;
+	padding: 0.22em 0.34em;
+	border-block-end: 1px solid rgb(255 255 255 / 10%);
+	overflow-wrap: anywhere;
+	text-align: start;
+	vertical-align: top;
+}
+
+.ttrpg-card-forge-card__table th {
+	background: color-mix(in srgb, var(--ttrpg-card-accent) 18%, transparent);
+	color: #f6f0df;
+	font-family: Inter, "Segoe UI", sans-serif;
+	font-size: 0.9em;
+	font-weight: 700;
+	letter-spacing: 0.025em;
+}
+
+.ttrpg-card-forge-card__table tbody tr:nth-child(even) {
+	background: rgb(255 255 255 / 2.5%);
+}
+
+.ttrpg-card-forge-card__stats {
+	display: grid;
+	align-content: start;
+	gap: 1.55cqw;
+	flex: 1 1 auto;
+	min-height: 0;
+	font-family: Inter, "Segoe UI", sans-serif;
+	font-size: var(--ttrpg-card-body-font-size);
+	line-height: 1.2;
+}
+
+.ttrpg-card-forge-card__stat {
+	display: grid;
+	grid-template-columns: minmax(25%, 0.72fr) minmax(0, 1.8fr);
+	gap: 2cqw;
+	padding-block-end: 1.2cqw;
+	border-block-end: 1px solid rgb(255 255 255 / 8%);
+}
+
+.ttrpg-card-forge-card__stat:last-child {
+	border-block-end: 0;
+}
+
+.ttrpg-card-forge-card__stat-label {
+	color: color-mix(in srgb, var(--ttrpg-card-accent) 62%, #eee6d7);
+	font-size: 0.76em;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.ttrpg-card-forge-card__stat-values {
+	color: #eee9dd;
+	font-family: Georgia, "Times New Roman", serif;
+}
+
+.ttrpg-card-forge-card__stat-values > div + div {
+	margin-block-start: 0.28em;
 }
 
 .ttrpg-card-forge-card__metrics {

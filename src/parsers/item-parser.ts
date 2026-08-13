@@ -31,8 +31,11 @@ export function parseItemFrontmatter(
 	const detail = rawDetail ? stripMarkdownLinks(rawDetail) : undefined;
 	const image = optionalString(frontmatter.image);
 	const damage = optionalString(frontmatter.itemDmg);
+	const damageTwoHanded = optionalString(frontmatter.itemDmg2h);
+	const range = optionalString(frontmatter.itemRange);
 	const properties = parseLinkedList(frontmatter.itemProp);
 	const mastery = optionalString(frontmatter.itemMastery);
+	const cost = optionalScalarText(frontmatter.itemCost);
 	const rarity = findTagValue(tags, RARITY_TAG_PREFIX);
 	const source = findTagValue(tags, SOURCE_TAG_PREFIX);
 	const weight = toFiniteNumber(frontmatter.itemWeight);
@@ -50,8 +53,11 @@ export function parseItemFrontmatter(
 		attunement: tags.includes(ATTUNEMENT_TAG),
 		...(source ? { source } : {}),
 		...(damage ? { damage } : {}),
+		...(damageTwoHanded ? { damageTwoHanded } : {}),
+		...(range ? { range: stripMarkdownLink(range) } : {}),
 		...(properties.length > 0 ? { properties } : {}),
 		...(mastery ? { mastery: stripMarkdownLink(mastery) } : {}),
+		...(cost ? { cost: stripMarkdownLink(cost) } : {}),
 		...(weight !== undefined ? { weight } : {}),
 		rawTags: tags,
 	};
@@ -131,6 +137,13 @@ function optionalString(value: unknown): string | undefined {
 
 	const trimmed = value.trim();
 	return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function optionalScalarText(value: unknown): string | undefined {
+	if (typeof value === 'number' && Number.isFinite(value)) {
+		return String(value);
+	}
+	return optionalString(value);
 }
 
 function firstNonEmptyString(primary: unknown, fallback: string): string {

@@ -1,5 +1,9 @@
 import type { ItemCardData } from '../models/item';
-import type { ItemCardPage, ItemCardPageKind } from '../models/item-card-page';
+import type {
+	ItemCardPage,
+	ItemCardPageKind,
+	ItemStatsPresentation,
+} from '../models/item-card-page';
 import type { ArtworkOrientation } from './artwork-orientation';
 import {
 	estimateDescriptionLoad,
@@ -13,6 +17,10 @@ import {
 	serializeSemanticMarkdown,
 	type MarkdownBlock,
 } from './semantic-markdown';
+import {
+	estimateItemStatsLoad,
+	hasMeaningfulItemStats,
+} from './structured-item-stats';
 
 export interface ItemCardPlanOptions {
 	artworkOrientation?: ArtworkOrientation;
@@ -25,7 +33,16 @@ interface PlannedPageContent {
 	blocks: MarkdownBlock[];
 	layout: ItemCardLayout;
 	showArtwork: boolean;
+	showStats: boolean;
+	statsPresentation?: ItemStatsPresentation;
 	hasUnsplitOverflow: boolean;
+	contentCapacity: number;
+}
+
+export interface BalanceableCardPage {
+	kind: ItemCardPageKind;
+	blocks: MarkdownBlock[];
+	contentCapacity: number;
 }
 
 interface PackedBlocks {
@@ -41,6 +58,8 @@ const PAGE_CAPACITIES: Record<ItemCardLayout | 'continuation' | 'crafting', numb
 	continuation: 31,
 	crafting: 29,
 };
+const SPARSE_FINAL_PAGE_THRESHOLD = 0.38;
+const BALANCED_FINAL_PAGE_TARGET = 0.46;
 
 export function planItemCardPages(
 	item: ItemCardData,
@@ -51,28 +70,45 @@ export function planItemCardPages(
 	const sections = partitionCraftingSection(allBlocks);
 	const artworkAvailable = options.artworkAvailable ?? item.hasImage;
 	const layoutItem = artworkAvailable ? item : { ...item, hasImage: false };
-	const primaryLayout = selectItemCardLayout(layoutItem, options.artworkOrientation);
+	const statsPresentation = hasMeaningfulItemStats(item)
+		? allBlocks.length === 0 ? 'full' : 'compact'
+		: undefined;
+	const primaryLayout = selectPlannerPrimaryLayout(
+		layoutItem,
+		options.artworkOrientation,
+		statsPresentation,
+	);
 	const primaryCapacity = PAGE_CAPACITIES[primaryLayout] * capacityScale;
+	const primaryContentCapacity = Math.max(
+		1,
+		primaryCapacity - (statsPresentation
+			? estimateItemStatsLoad(item, statsPresentation)
+			: 0),
+	);
 	const continuationCapacity = PAGE_CAPACITIES.continuation * capacityScale;
 	const planned: PlannedPageContent[] = [];
 
 	const combinedLoad = estimateBlocksLoad([...sections.main, ...sections.crafting]);
-	if (sections.crafting.length > 0 && combinedLoad <= primaryCapacity) {
+	if (sections.crafting.length > 0 && combinedLoad <= primaryContentCapacity) {
 		planned.push({
 			kind: 'primary',
 			blocks: [...sections.main, ...sections.crafting].map(cloneMarkdownBlock),
 			layout: primaryLayout,
 			showArtwork: artworkAvailable && primaryLayout !== 'text',
+			showStats: statsPresentation !== undefined,
+			...(statsPresentation ? { statsPresentation } : {}),
 			hasUnsplitOverflow: false,
+			contentCapacity: primaryContentCapacity,
 		});
 	} else {
 		appendPackedSection(
 			planned,
 			sections.main,
-			primaryCapacity,
+			primaryContentCapacity,
 			continuationCapacity,
 			primaryLayout,
 			artworkAvailable,
+			statsPresentation,
 		);
 		appendCraftingPages(planned, sections.crafting, capacityScale);
 	}
@@ -83,9 +119,14 @@ export function planItemCardPages(
 			blocks: [],
 			layout: primaryLayout,
 			showArtwork: artworkAvailable && primaryLayout !== 'text',
+			showStats: statsPresentation !== undefined,
+			...(statsPresentation ? { statsPresentation } : {}),
 			hasUnsplitOverflow: false,
+			contentCapacity: primaryContentCapacity,
 		});
 	}
+
+	balanceSparseFinalPage(planned);
 
 	const pageCount = planned.length;
 	return planned.map((page, pageIndex) => ({
@@ -97,12 +138,56 @@ export function planItemCardPages(
 		blocks: page.blocks,
 		layout: page.layout,
 		showArtwork: page.showArtwork,
+		showStats: page.showStats,
+		...(page.statsPresentation
+			? { statsPresentation: page.statsPresentation }
+			: {}),
 		showSource: pageIndex === pageCount - 1,
 		...(options.artworkOrientation
 			? { artworkOrientation: options.artworkOrientation }
 			: {}),
 		hasUnsplitOverflow: page.hasUnsplitOverflow,
 	}));
+}
+
+export function balanceSparseFinalPage<T extends BalanceableCardPage>(pages: T[]): void {
+	if (pages.length < 2) {
+		return;
+	}
+
+	const previous = pages.at(-2);
+	const final = pages.at(-1);
+	if (!previous || !final || !canBalanceAcrossKinds(previous.kind, final.kind)) {
+		return;
+	}
+
+	let finalLoad = estimateBlocksLoad(final.blocks);
+	if (finalLoad / final.contentCapacity >= SPARSE_FINAL_PAGE_THRESHOLD) {
+		return;
+	}
+
+	while (previous.blocks.length > 1) {
+		let moveStart = previous.blocks.length - 1;
+		if (moveStart > 0 && isHeadingLikeBlock(previous.blocks[moveStart - 1])) {
+			moveStart -= 1;
+		}
+		if (moveStart === 0) {
+			return;
+		}
+
+		const moving = previous.blocks.slice(moveStart);
+		const movingLoad = estimateBlocksLoad(moving);
+		if (finalLoad + movingLoad > final.contentCapacity) {
+			return;
+		}
+
+		previous.blocks.splice(moveStart, moving.length);
+		final.blocks.unshift(...moving.map(cloneMarkdownBlock));
+		finalLoad += movingLoad;
+		if (finalLoad / final.contentCapacity >= BALANCED_FINAL_PAGE_TARGET) {
+			return;
+		}
+	}
 }
 
 export function estimateBlocksLoad(blocks: readonly MarkdownBlock[]): number {
@@ -120,6 +205,7 @@ function appendPackedSection(
 	continuationCapacity: number,
 	primaryLayout: ItemCardLayout,
 	artworkAvailable: boolean,
+	statsPresentation: ItemStatsPresentation | undefined,
 ): void {
 	if (blocks.length === 0) {
 		return;
@@ -132,7 +218,10 @@ function appendPackedSection(
 		blocks: primaryBlocks,
 		layout: primaryLayout,
 		showArtwork: artworkAvailable && primaryLayout !== 'text',
+		showStats: statsPresentation !== undefined,
+		...(statsPresentation ? { statsPresentation } : {}),
 		hasUnsplitOverflow: firstPage.oversizedPageIndexes.has(0),
+		contentCapacity: primaryCapacity,
 	});
 
 	const consumedCount = countEquivalentBlocks(primaryBlocks);
@@ -148,7 +237,9 @@ function appendPackedSection(
 			blocks: pageBlocks,
 			layout: 'text',
 			showArtwork: false,
+			showStats: false,
 			hasUnsplitOverflow: continuations.oversizedPageIndexes.has(index),
+			contentCapacity: continuationCapacity,
 		});
 	}
 }
@@ -169,7 +260,9 @@ function appendCraftingPages(
 			blocks: pageBlocks,
 			layout: 'text',
 			showArtwork: false,
+			showStats: false,
 			hasUnsplitOverflow: packed.oversizedPageIndexes.has(index),
+			contentCapacity: PAGE_CAPACITIES.crafting * capacityScale,
 		});
 	}
 }
@@ -192,7 +285,7 @@ function packBlocks(
 		}
 		const blockLoad = estimateBlockLoad(block);
 		const nextBlock = expandedBlocks[index + 1];
-		const headingBundleLoad = block.type === 'heading' && nextBlock
+		const headingBundleLoad = isHeadingLikeBlock(block) && nextBlock
 			? blockLoad + estimateBlockLoad(nextBlock)
 			: blockLoad;
 		const shouldMoveToNextPage = currentPage.length > 0
@@ -238,7 +331,43 @@ function splitBlock(block: MarkdownBlock, capacity: number): MarkdownBlock[] {
 	if (block.type === 'paragraph') {
 		return splitParagraphBlock(block, capacity);
 	}
+	if (block.type === 'table') {
+		return splitTableBlock(block, capacity);
+	}
 	return splitListBlock(block, capacity);
+}
+
+function splitTableBlock(
+	block: Extract<MarkdownBlock, { type: 'table' }>,
+	capacity: number,
+): MarkdownBlock[] {
+	const headerLoad = estimateTableHeaderLoad(block.headers);
+	const results: MarkdownBlock[] = [];
+	let rows: string[][] = [];
+	let load = headerLoad;
+
+	for (const row of block.rows) {
+		const rowLoad = estimateTableRowLoad(row);
+		if (rows.length > 0 && load + rowLoad > capacity) {
+			results.push({
+				type: 'table',
+				headers: [...block.headers],
+				rows,
+			});
+			rows = [];
+			load = headerLoad;
+		}
+		rows.push([...row]);
+		load += rowLoad;
+	}
+	if (rows.length > 0 || results.length === 0) {
+		results.push({
+			type: 'table',
+			headers: [...block.headers],
+			rows,
+		});
+	}
+	return results;
 }
 
 function splitListBlock(
@@ -317,9 +446,24 @@ function estimateBlockLoad(block: MarkdownBlock): number {
 				(total, item) => total + estimateTextLoad(item, 34) + 0.4,
 				0,
 			);
+		case 'table':
+			return estimateTableHeaderLoad(block.headers)
+				+ block.rows.reduce((total, row) => total + estimateTableRowLoad(row), 0);
 		case 'paragraph':
 			return estimateDescriptionLoad(block.markdown);
 	}
+}
+
+function estimateTableHeaderLoad(headers: readonly string[]): number {
+	return 1.2 + estimateTableRowLoad(headers) * 0.65;
+}
+
+function estimateTableRowLoad(row: readonly string[]): number {
+	const longestCellLoad = row.reduce(
+		(longest, cell) => Math.max(longest, estimateTextLoad(cell, 20)),
+		1,
+	);
+	return Math.max(0.9, longestCellLoad * 0.85);
 }
 
 function estimateTextLoad(markdown: string, approximateWidth: number): number {
@@ -329,6 +473,36 @@ function estimateTextLoad(markdown: string, approximateWidth: number): number {
 
 function countEquivalentBlocks(blocks: readonly MarkdownBlock[]): number {
 	return blocks.length;
+}
+
+function selectPlannerPrimaryLayout(
+	item: ItemCardData,
+	artworkOrientation: ArtworkOrientation | undefined,
+	statsPresentation: ItemStatsPresentation | undefined,
+): ItemCardLayout {
+	const selected = selectItemCardLayout(item, artworkOrientation);
+	if (!item.hasImage || selected !== 'text') {
+		if (selected === 'image' && statsPresentation === 'full') {
+			return 'compact';
+		}
+		return selected;
+	}
+	return artworkOrientation === 'portrait' ? 'portrait' : 'compact';
+}
+
+function canBalanceAcrossKinds(
+	previous: ItemCardPageKind,
+	final: ItemCardPageKind,
+): boolean {
+	return previous === 'crafting' ? final === 'crafting' : final !== 'crafting';
+}
+
+function isHeadingLikeBlock(block: MarkdownBlock | undefined): boolean {
+	return Boolean(
+		block?.type === 'heading'
+		|| (block?.type === 'paragraph'
+			&& /^\s*(?:\*\*[^*]+\*\*|__[^_]+__)\s*$/u.test(block.markdown)),
+	);
 }
 
 function clampCapacityScale(scale: number): number {
