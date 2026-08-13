@@ -2,6 +2,7 @@ import type { ItemCardData } from '../models/item';
 import type { ArtworkOrientation, ItemCardPage } from '../models/item-card-page';
 import { ArtworkBoundsService } from './artwork-bounds';
 import { classifyArtworkOrientation } from './artwork-orientation';
+import { compactContinuationPages } from './item-card-compactor';
 import {
 	ItemCardRenderer,
 	type ArtworkLoadResult,
@@ -63,11 +64,29 @@ export class ItemCardFitService {
 					lastUnfitPageIndexes = unfitPageIndexes;
 					lastCapacityScale = capacityScale;
 					if (unfitPageIndexes.size === 0) {
-						return {
+						const compactedPages = await this.compactPages(
+							measurementRoot,
 							pages,
+							artworkResourcePath,
+						);
+						const compactedUnfitPageIndexes = await this.measurePages(
+							measurementRoot,
+							compactedPages,
+							artworkResourcePath,
+						);
+						if (compactedUnfitPageIndexes.size > 0) {
+							return {
+								pages,
+								artworkResult,
+								capacityScale,
+								unfitPageIndexes,
+							};
+						}
+						return {
+							pages: compactedPages,
 							artworkResult,
 							capacityScale,
-							unfitPageIndexes,
+							unfitPageIndexes: compactedUnfitPageIndexes,
 						};
 					}
 				}
@@ -87,6 +106,46 @@ export class ItemCardFitService {
 		};
 	}
 
+	private async compactPages(
+		measurementRoot: HTMLElement,
+		pages: readonly ItemCardPage[],
+		artworkResourcePath?: string,
+	): Promise<ItemCardPage[]> {
+		const continuationCount = pages.filter(
+			(page) => page.kind === 'continuation',
+		).length;
+		if (continuationCount < 2) {
+			return [...pages];
+		}
+
+		return compactContinuationPages(
+			pages,
+			async (page) => !(await this.measurePage(
+				measurementRoot,
+				page,
+				artworkResourcePath,
+			)),
+		);
+	}
+
+	private async measurePage(
+		measurementRoot: HTMLElement,
+		page: ItemCardPage,
+		artworkResourcePath?: string,
+	): Promise<boolean> {
+		const host = measurementRoot.createDiv({
+			cls: 'ttrpg-card-forge__measurement-card',
+		});
+		try {
+			const rendered = this.renderer.render(host, page, artworkResourcePath);
+			await rendered.artworkReady;
+			await waitForLayout(measurementRoot.ownerDocument.defaultView);
+			return rendered.hasOverflow();
+		} finally {
+			host.remove();
+		}
+	}
+
 	private async measurePages(
 		measurementRoot: HTMLElement,
 		pages: readonly ItemCardPage[],
@@ -94,16 +153,9 @@ export class ItemCardFitService {
 	): Promise<Set<number>> {
 		const unfitPageIndexes = new Set<number>();
 		for (const page of pages) {
-			const host = measurementRoot.createDiv({
-				cls: 'ttrpg-card-forge__measurement-card',
-			});
-			const rendered = this.renderer.render(host, page, artworkResourcePath);
-			await rendered.artworkReady;
-			await waitForLayout(measurementRoot.ownerDocument.defaultView);
-			if (rendered.hasOverflow()) {
+			if (await this.measurePage(measurementRoot, page, artworkResourcePath)) {
 				unfitPageIndexes.add(page.pageIndex);
 			}
-			host.remove();
 		}
 		return unfitPageIndexes;
 	}
