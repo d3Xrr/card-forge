@@ -1,6 +1,6 @@
 import type { App, TFile } from 'obsidian';
 
-import { getArtworkResourcePath } from '../services/artwork-resolver';
+import { resolveArtworkDescriptor } from '../services/artwork-resolver';
 import {
 	flattenPrintQueue,
 	getInvalidQueueEntries,
@@ -68,11 +68,15 @@ export class PdfExportService {
 			const cacheKey = createRasterCacheKey(card.filePath, card.pageIndex);
 			let pngBytes = rasterCache.get(cacheKey);
 			if (!pngBytes) {
-				const artworkPath = getArtworkResourcePath(this.app, card.page.item);
+				const artwork = card.artworkResourcePath
+					? undefined
+					: resolveArtworkDescriptor(this.app, card.page.item);
 				pngBytes = await this.rasterizer.rasterize(
 					document,
 					card.page,
-					artworkPath,
+					card.artworkResourcePath ?? artwork?.resourcePath,
+					card.artworkRevisionFingerprint
+						?? artwork?.revisionFingerprint,
 				);
 				rasterCache.set(cacheKey, pngBytes);
 			}

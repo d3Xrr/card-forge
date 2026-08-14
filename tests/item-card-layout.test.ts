@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { ItemCardData } from '../src/models/item';
+import { PHYSICAL_CARD_PROFILE } from '../src/models/physical-card-profile';
 import {
 	estimateDescriptionLoad,
 	getAdaptiveBodyFontCandidates,
@@ -15,6 +16,7 @@ import {
 	createItemCardPageMeasurementKey,
 	findBestAdaptiveBodyFit,
 	ITEM_CARD_FIT_CAPACITY_SCALES,
+	ITEM_CARD_MEASUREMENT_RENDER_REVISION,
 } from '../src/renderer/item-card-fit-service';
 import { PRINT_TYPOGRAPHY } from '../src/renderer/print-typography';
 
@@ -193,8 +195,53 @@ void test('measurement keys reuse identical pages but distinguish render inputs'
 		showSource: true,
 		hasUnsplitOverflow: false,
 	};
-	const key = createItemCardPageMeasurementKey(page);
-	assert.equal(createItemCardPageMeasurementKey(structuredClone(page)), key);
-	assert.notEqual(createItemCardPageMeasurementKey({ ...page, bodyFontPoints: 8.5 }), key);
-	assert.notEqual(createItemCardPageMeasurementKey({ ...page, artworkSharePercent: 16 }), key);
+	const artworkFingerprint = 'images/test-item.webp\u00001723\u00004567';
+	const key = createItemCardPageMeasurementKey(page, artworkFingerprint);
+	assert.equal(
+		createItemCardPageMeasurementKey(structuredClone(page), artworkFingerprint),
+		key,
+	);
+	assert.notEqual(
+		createItemCardPageMeasurementKey(page, 'images/test-item.webp\u00001724\u00004567'),
+		key,
+	);
+	assert.notEqual(createItemCardPageMeasurementKey({ ...page, bodyFontPoints: 8.5 }, artworkFingerprint), key);
+	assert.notEqual(createItemCardPageMeasurementKey({ ...page, artworkSharePercent: 16 }, artworkFingerprint), key);
+	assert.notEqual(createItemCardPageMeasurementKey({
+		...page,
+		blocks: [{ type: 'paragraph', markdown: 'Changed rendered rules.' }],
+	}, artworkFingerprint), key);
+
+	const itemChanges: Partial<ItemCardData>[] = [
+		{ name: 'Renamed Item' },
+		{ detail: 'Weapon, legendary' },
+		{ sourceText: 'A different source line' },
+		{ rarity: 'legendary' },
+		{ attunement: true },
+		{ source: 'phb' },
+		{ damage: '1d8 slashing' },
+		{ damageTwoHanded: '1d10 slashing' },
+		{ range: '20/60' },
+		{ properties: ['Thrown', 'Versatile'] },
+		{ mastery: 'Topple' },
+		{ cost: '50 GP' },
+		{ weight: 4 },
+	];
+	for (const change of itemChanges) {
+		assert.notEqual(
+			createItemCardPageMeasurementKey({
+				...page,
+				item: { ...page.item, ...change },
+			}, artworkFingerprint),
+			key,
+			JSON.stringify(change),
+		);
+	}
+
+	const parsed = JSON.parse(key) as {
+		renderRevision: string;
+		physicalProfile: typeof PHYSICAL_CARD_PROFILE;
+	};
+	assert.equal(parsed.renderRevision, ITEM_CARD_MEASUREMENT_RENDER_REVISION);
+	assert.deepEqual(parsed.physicalProfile, PHYSICAL_CARD_PROFILE);
 });

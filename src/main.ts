@@ -6,12 +6,20 @@ import {
 	PrintQueueService,
 	type PrintQueueEntry,
 } from './models/print-queue';
+import type { ItemCardData } from './models/item';
 import {
 	DEFAULT_SETTINGS,
 	CardForgeSettingTab,
 	type CardForgeSettings,
 } from './settings';
 import { CARD_FORGE_VIEW_TYPE, CardForgeView } from './views/card-forge-view';
+import { PlanningPerformanceMonitor } from './services/planning-performance';
+import type { FittedItemCardPlan } from './renderer/item-card-fit-service';
+import {
+	createEffectiveItemFingerprint,
+	PhysicalPlanCache,
+} from './services/physical-plan-cache';
+import { isSupportedArtworkPath } from './services/artwork-resolver';
 
 const INDEX_REBUILD_DELAY_MS = 350;
 
@@ -19,14 +27,23 @@ export default class TTRPGCardForgePlugin extends Plugin {
 	settings: CardForgeSettings = DEFAULT_SETTINGS;
 	itemIndex!: ItemIndex;
 	printQueue!: PrintQueueService;
+	readonly planningPerformance = new PlanningPerformanceMonitor();
+	readonly physicalPlanCache = new PhysicalPlanCache<FittedItemCardPlan>();
+	private indexedInputFingerprints = new Map<string, string>();
 	private rebuildTimer: number | null = null;
+	private unsubscribeFromIndex: (() => void) | null = null;
 	private unsubscribeFromQueue: (() => void) | null = null;
+	private removePerformanceDebugApi: (() => void) | null = null;
 	private saveChain: Promise<void> = Promise.resolve();
 
 	async onload(): Promise<void> {
 		const savedQueue = await this.loadPluginData();
 		this.itemIndex = new ItemIndex(this.app);
 		this.printQueue = new PrintQueueService(savedQueue);
+		this.removePerformanceDebugApi = this.planningPerformance.installDebugApi(window);
+		this.unsubscribeFromIndex = this.itemIndex.subscribe((items) => {
+			this.reconcilePhysicalPlanCache(items);
+		});
 		this.unsubscribeFromQueue = this.printQueue.subscribe(() => {
 			void this.persistPluginData().catch((error: unknown) => {
 				console.error('TTRPG Card Forge: could not persist print queue', error);
@@ -40,6 +57,8 @@ export default class TTRPGCardForgePlugin extends Plugin {
 				this.itemIndex,
 				this.printQueue,
 				() => this.settings,
+				this.physicalPlanCache,
+				this.planningPerformance,
 			),
 		);
 
@@ -69,15 +88,37 @@ export default class TTRPGCardForgePlugin extends Plugin {
 			if (this.isConfiguredItemPath(file.path)) {
 				this.queueIndexRebuild();
 			}
+			if (isSupportedArtworkPath(file.path)) {
+				this.invalidateArtworkAndRebuild(file.path);
+			}
 		}));
 		this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
 			if (this.isConfiguredItemPath(file.path) || this.isConfiguredItemPath(oldPath)) {
+				this.queueIndexRebuild();
+			}
+			if (isSupportedArtworkPath(oldPath)) {
+				this.physicalPlanCache.invalidateArtwork(oldPath);
+			}
+			if (isSupportedArtworkPath(file.path)) {
+				this.invalidateArtworkAndRebuild(file.path);
+			} else if (isSupportedArtworkPath(oldPath)) {
 				this.queueIndexRebuild();
 			}
 		}));
 		this.registerEvent(this.app.vault.on('create', (file) => {
 			if (this.isConfiguredItemFile(file)) {
 				this.queueIndexRebuild();
+			}
+			if (isSupportedArtworkPath(file.path)) {
+				this.invalidateArtworkAndRebuild(file.path);
+			}
+		}));
+		this.registerEvent(this.app.vault.on('modify', (file) => {
+			if (this.isConfiguredItemFile(file)) {
+				this.queueIndexRebuild();
+			}
+			if (isSupportedArtworkPath(file.path)) {
+				this.invalidateArtworkAndRebuild(file.path);
 			}
 		}));
 
@@ -87,8 +128,14 @@ export default class TTRPGCardForgePlugin extends Plugin {
 	}
 
 	onunload(): void {
+		this.unsubscribeFromIndex?.();
+		this.unsubscribeFromIndex = null;
 		this.unsubscribeFromQueue?.();
 		this.unsubscribeFromQueue = null;
+		this.removePerformanceDebugApi?.();
+		this.removePerformanceDebugApi = null;
+		this.physicalPlanCache.clear();
+		this.indexedInputFingerprints.clear();
 		if (this.rebuildTimer !== null) {
 			window.clearTimeout(this.rebuildTimer);
 			this.rebuildTimer = null;
@@ -164,6 +211,41 @@ export default class TTRPGCardForgePlugin extends Plugin {
 	private isConfiguredItemPath(path: string): boolean {
 		const folder = this.settings.itemFolder.trim().replaceAll('\\', '/').replace(/\/+$/u, '');
 		return folder.length > 0 && path.startsWith(`${folder}/`);
+	}
+
+	private reconcilePhysicalPlanCache(items: readonly ItemCardData[]): void {
+		const nextFingerprints = new Map<string, string>();
+		for (const item of items) {
+			const sourceFingerprint = this.itemIndex.getSourceFingerprint(item.filePath)
+				?? 'source-unavailable';
+			nextFingerprints.set(
+				item.filePath,
+				JSON.stringify([
+					sourceFingerprint,
+					createEffectiveItemFingerprint(item),
+				]),
+			);
+		}
+
+		const allPaths = new Set([
+			...this.indexedInputFingerprints.keys(),
+			...nextFingerprints.keys(),
+		]);
+		for (const filePath of allPaths) {
+			if (
+				this.indexedInputFingerprints.has(filePath)
+				&& this.indexedInputFingerprints.get(filePath)
+					!== nextFingerprints.get(filePath)
+			) {
+				this.physicalPlanCache.invalidateFile(filePath);
+			}
+		}
+		this.indexedInputFingerprints = nextFingerprints;
+	}
+
+	private invalidateArtworkAndRebuild(artworkPath: string): void {
+		this.physicalPlanCache.invalidateArtwork(artworkPath);
+		this.queueIndexRebuild(0);
 	}
 
 	private async loadPluginData(): Promise<PrintQueueEntry[]> {

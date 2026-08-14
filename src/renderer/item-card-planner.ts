@@ -22,6 +22,7 @@ import {
 	estimateItemStatsLoad,
 	hasMeaningfulItemStats,
 } from './structured-item-stats';
+import type { PlanningPerformanceTrace } from '../services/planning-performance';
 
 export interface ItemCardPlanOptions {
 	artworkOrientation?: ArtworkOrientation;
@@ -29,7 +30,20 @@ export interface ItemCardPlanOptions {
 	capacityScale?: number;
 	bodyFontPoints?: number;
 	artworkSharePercent?: number;
+	performanceTrace?: PlanningPerformanceTrace;
 }
+
+export interface PreparedItemCardPlanningContext {
+	allBlocks: readonly MarkdownBlock[];
+	sections: Readonly<{
+		main: readonly MarkdownBlock[];
+		crafting: readonly MarkdownBlock[];
+	}>;
+}
+
+export type ItemCardPagePlanner = (
+	options?: ItemCardPlanOptions,
+) => ItemCardPage[];
 
 export type ItemCardContentStrategy =
 	| 'full-stats'
@@ -76,9 +90,69 @@ export function planItemCardPages(
 	item: ItemCardData,
 	options: ItemCardPlanOptions = {},
 ): ItemCardPage[] {
-	const capacityScale = clampCapacityScale(options.capacityScale ?? 1);
-	const allBlocks = parseSemanticMarkdown(item.description);
+	return planPreparedItemCardPages(
+		item,
+		prepareItemCardPlanningContext(item, options.performanceTrace),
+		options,
+	);
+}
+
+export function prepareItemCardPlanningContext(
+	item: ItemCardData,
+	performanceTrace?: PlanningPerformanceTrace,
+): PreparedItemCardPlanningContext {
+	const allBlocks = performanceTrace
+		? performanceTrace.measure(
+			'semanticParsing',
+			() => parseSemanticMarkdown(item.description),
+		)
+		: parseSemanticMarkdown(item.description);
 	const sections = partitionCraftingSection(allBlocks);
+	return { allBlocks, sections };
+}
+
+export function createMemoizedItemCardPagePlanner(
+	item: ItemCardData,
+	context: PreparedItemCardPlanningContext,
+): ItemCardPagePlanner {
+	const pagesByOptions = new Map<string, ItemCardPage[]>();
+	return (options: ItemCardPlanOptions = {}) => {
+		const key = createItemCardPlanOptionsKey(item, options);
+		const cached = pagesByOptions.get(key);
+		if (cached) {
+			options.performanceTrace?.increment('candidatePageCacheHits');
+			return cached;
+		}
+
+		options.performanceTrace?.increment('candidatePageCacheMisses');
+		const pages = planPreparedItemCardPages(item, context, options);
+		pagesByOptions.set(key, pages);
+		return pages;
+	};
+}
+
+function createItemCardPlanOptionsKey(
+	item: ItemCardData,
+	options: ItemCardPlanOptions,
+): string {
+	return JSON.stringify({
+		artworkOrientation: options.artworkOrientation ?? null,
+		artworkAvailable: options.artworkAvailable ?? item.hasImage,
+		capacityScale: clampCapacityScale(options.capacityScale ?? 1),
+		bodyFontPoints: clampBodyFontPoints(
+			options.bodyFontPoints ?? selectPreferredBodyFontPoints(item.description),
+		),
+		artworkSharePercent: options.artworkSharePercent ?? null,
+	});
+}
+
+export function planPreparedItemCardPages(
+	item: ItemCardData,
+	context: PreparedItemCardPlanningContext,
+	options: ItemCardPlanOptions = {},
+): ItemCardPage[] {
+	const capacityScale = clampCapacityScale(options.capacityScale ?? 1);
+	const { allBlocks, sections } = context;
 	const artworkAvailable = options.artworkAvailable ?? item.hasImage;
 	const layoutItem = artworkAvailable ? item : { ...item, hasImage: false };
 	const strategy = selectItemCardContentStrategy(item, artworkAvailable, allBlocks.length > 0);

@@ -6,6 +6,9 @@ import { A4_CARDS_PER_SHEET } from '../export/a4-sheet-geometry';
 export interface PhysicalItemPlan {
 	pages: readonly ItemCardPage[];
 	unfitPageIndexes: ReadonlySet<number>;
+	cacheKey?: string;
+	artworkResourcePath?: string;
+	artworkRevisionFingerprint?: string;
 }
 
 export interface ResolvedPrintQueueEntry {
@@ -14,6 +17,9 @@ export interface ResolvedPrintQueueEntry {
 	pages: readonly ItemCardPage[];
 	unfitPageIndexes: ReadonlySet<number>;
 	unavailable: boolean;
+	cacheKey?: string;
+	artworkResourcePath?: string;
+	artworkRevisionFingerprint?: string;
 }
 
 export interface PhysicalQueueCard {
@@ -23,6 +29,8 @@ export interface PhysicalQueueCard {
 	copyIndex: number;
 	pageIndex: number;
 	page: ItemCardPage;
+	artworkResourcePath?: string;
+	artworkRevisionFingerprint?: string;
 }
 
 export interface PrintQueueSummary {
@@ -48,6 +56,13 @@ export function resolvePrintQueue(
 			pages: item && plan ? plan.pages : [],
 			unfitPageIndexes: item && plan ? plan.unfitPageIndexes : new Set<number>(),
 			unavailable: !item,
+			...(item && plan?.cacheKey ? { cacheKey: plan.cacheKey } : {}),
+			...(item && plan?.artworkResourcePath
+				? { artworkResourcePath: plan.artworkResourcePath }
+				: {}),
+			...(item && plan?.artworkRevisionFingerprint
+				? { artworkRevisionFingerprint: plan.artworkRevisionFingerprint }
+				: {}),
 		};
 	});
 }
@@ -69,6 +84,15 @@ export function flattenPrintQueue(
 					copyIndex,
 					pageIndex: page.pageIndex,
 					page,
+					...(resolved.artworkResourcePath
+						? { artworkResourcePath: resolved.artworkResourcePath }
+						: {}),
+					...(resolved.artworkRevisionFingerprint
+						? {
+							artworkRevisionFingerprint:
+								resolved.artworkRevisionFingerprint,
+						}
+						: {}),
 				});
 			}
 		}

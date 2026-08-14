@@ -14,6 +14,7 @@ export class CardRasterizer {
 		document: Document,
 		page: ItemCardPage,
 		artworkResourcePath?: string,
+		artworkRevisionFingerprint?: string,
 	): Promise<Uint8Array> {
 		const root = document.body.createDiv({ cls: 'ttrpg-card-forge__export-root' });
 		root.setAttribute('aria-hidden', 'true');
@@ -21,7 +22,12 @@ export class CardRasterizer {
 		applyCanonicalCardSize(host);
 
 		try {
-			const rendered = this.renderer.render(host, page, artworkResourcePath);
+			const rendered = this.renderer.render(
+				host,
+				page,
+				artworkResourcePath,
+				artworkRevisionFingerprint,
+			);
 			await rendered.artworkReady;
 			await document.fonts?.ready;
 			await waitForLayout(document.defaultView);

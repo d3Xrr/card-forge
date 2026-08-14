@@ -16,14 +16,33 @@ import {
 	type FittedItemCardPlan,
 } from '../renderer/item-card-fit-service';
 import { formatLayoutName } from '../renderer/item-card-layout';
+import { serializeFittedItemCardPlanSignature } from '../renderer/item-card-plan-signature';
 import {
 	ItemCardRenderer,
 	type ArtworkLoadResult,
 	type RenderedItemCard,
 } from '../renderer/item-card-renderer';
 import { formatSourceDisplay } from '../renderer/source-formatter';
-import { getArtworkResourcePath } from '../services/artwork-resolver';
+import {
+	resolveArtworkDescriptor,
+} from '../services/artwork-resolver';
 import type { ItemIndex } from '../services/item-index';
+import {
+	areQueuePlanInputsCurrent,
+	isIndexedPlanningInputCurrent,
+	LatestRequestGate,
+	reconcileVisibleSelection,
+	resolveQueuePlanMap,
+	selectRelativePageIndex,
+	shouldRequestSelectedPlan,
+	type LatestRequestToken,
+} from '../services/planning-interactions';
+import {
+	createEffectiveItemFingerprint,
+	createPhysicalPlanCacheIdentity,
+	type PhysicalPlanCache,
+	type PhysicalPlanCacheIdentity,
+} from '../services/physical-plan-cache';
 import {
 	calculatePrintQueueSummary,
 	flattenPrintQueue,
@@ -33,8 +52,23 @@ import {
 	type ResolvedPrintQueueEntry,
 } from '../services/print-queue-planner';
 import type { CardForgeSettings } from '../settings';
+import {
+	type PlanningCacheStatus,
+	PlanningPerformanceMonitor,
+} from '../services/planning-performance';
 
 export const CARD_FORGE_VIEW_TYPE = 'ttrpg-card-forge-view';
+const PHYSICAL_PLAN_RENDER_SETTINGS_FINGERPRINT = 'card-render-settings-v1';
+
+interface PhysicalPlanLookup {
+	identity: PhysicalPlanCacheIdentity;
+	indexIsCurrent: boolean;
+	artworkResourcePath?: string;
+	artworkRevisionFingerprint?: string;
+	cacheStatus: PlanningCacheStatus;
+	completed?: FittedItemCardPlan;
+	promise?: Promise<FittedItemCardPlan>;
+}
 
 export class CardForgeView extends ItemView {
 	private readonly artworkBounds = new ArtworkBoundsService();
@@ -44,7 +78,6 @@ export class CardForgeView extends ItemView {
 		this.artworkBounds,
 	);
 	private readonly pdfExportService: PdfExportService;
-	private readonly physicalPlanCache = new Map<string, Promise<FittedItemCardPlan>>();
 	private searchInput: HTMLInputElement | null = null;
 	private totalCountElement: HTMLElement | null = null;
 	private filteredCountElement: HTMLElement | null = null;
@@ -75,12 +108,17 @@ export class CardForgeView extends ItemView {
 	private cardResizeObserver: ResizeObserver | null = null;
 	private previewGeneration = 0;
 	private queuePlanGeneration = 0;
+	private pageRenderGeneration = 0;
+	private readonly previewRequestGate = new LatestRequestGate<string>();
+	private readonly queueRequestGate = new LatestRequestGate<number>();
 	private previewPages: ItemCardPage[] = [];
 	private currentQueuePlan: ResolvedPrintQueueEntry[] = [];
 	private currentPageIndex = 0;
 	private currentSheetIndex = 0;
 	private unfitPageIndexes: ReadonlySet<number> = new Set<number>();
 	private currentArtworkResourcePath: string | undefined;
+	private currentArtworkRevisionFingerprint: string | undefined;
+	private currentPreviewPlanKey: string | undefined;
 	private exportInProgress = false;
 
 	constructor(
@@ -88,6 +126,8 @@ export class CardForgeView extends ItemView {
 		private readonly itemIndex: ItemIndex,
 		private readonly printQueue: PrintQueueService,
 		private readonly getSettings: () => Readonly<CardForgeSettings>,
+		private readonly physicalPlanCache: PhysicalPlanCache<FittedItemCardPlan>,
+		private readonly planningPerformance: PlanningPerformanceMonitor,
 	) {
 		super(leaf);
 		this.pdfExportService = new PdfExportService(this.app, this.cardRenderer);
@@ -171,8 +211,21 @@ export class CardForgeView extends ItemView {
 		}
 
 		this.unsubscribeFromIndex = this.itemIndex.subscribe(() => {
-			this.physicalPlanCache.clear();
-			this.render();
+			const selectionChanged = this.renderBrowser();
+			const selectedItem = this.findSelectedItem();
+			const selectedIdentity = selectedItem
+				? this.createPhysicalPlanRequest(selectedItem).identity.key
+				: undefined;
+			const effectivePlanChanged = selectedIdentity === undefined
+				? this.currentPreviewPlanKey !== undefined
+				: shouldRequestSelectedPlan(
+					this.currentPreviewPlanKey ?? null,
+					selectedIdentity,
+				);
+			if (selectionChanged || effectivePlanChanged) {
+				this.renderPreview();
+			}
+			this.renderQueue();
 		});
 		this.unsubscribeFromQueue = this.printQueue.subscribe(() => {
 			this.currentSheetIndex = 0;
@@ -192,12 +245,16 @@ export class CardForgeView extends ItemView {
 		this.cardResizeObserver?.disconnect();
 		this.previewGeneration += 1;
 		this.queuePlanGeneration += 1;
-		this.physicalPlanCache.clear();
+		this.pageRenderGeneration += 1;
+		this.previewRequestGate.invalidate();
+		this.queueRequestGate.invalidate();
 		this.containerEl.children[1]?.removeClass('ttrpg-card-forge');
 		this.previewPages = [];
 		this.currentQueuePlan = [];
 		this.unfitPageIndexes = new Set<number>();
 		this.currentArtworkResourcePath = undefined;
+		this.currentArtworkRevisionFingerprint = undefined;
+		this.currentPreviewPlanKey = undefined;
 	}
 
 	private buildBrowser(workspace: HTMLElement): void {
@@ -318,7 +375,6 @@ export class CardForgeView extends ItemView {
 		if (!this.resultsElement || !this.totalCountElement || !this.filteredCountElement) {
 			return false;
 		}
-		const previousSelection = this.selectedFilePath;
 		const allItems = this.itemIndex.getItems();
 		const query = this.searchInput?.value.trim().toLocaleLowerCase() ?? '';
 		const visibleItems = query
@@ -327,12 +383,16 @@ export class CardForgeView extends ItemView {
 		this.totalCountElement.setText(formatItemCount(allItems.length));
 		this.filteredCountElement.setText(query ? `${visibleItems.length} results` : formatItemCount(visibleItems.length));
 
-		if (!visibleItems.some((item) => item.filePath === this.selectedFilePath)) {
-			this.selectedFilePath = visibleItems[0]?.filePath ?? null;
+		const selection = reconcileVisibleSelection(
+			this.selectedFilePath,
+			visibleItems.map((item) => item.filePath),
+		);
+		this.selectedFilePath = selection.selectedFilePath;
+		if (selection.selectionChanged) {
 			this.currentPageIndex = 0;
 		}
 		this.renderItemList(visibleItems, query);
-		return this.selectedFilePath !== previousSelection;
+		return selection.selectionChanged;
 	}
 
 	private renderItemList(items: readonly ItemCardData[], query: string): void {
@@ -385,12 +445,16 @@ export class CardForgeView extends ItemView {
 		}
 		this.cancelPreviewObservation();
 		const generation = ++this.previewGeneration;
+		this.pageRenderGeneration += 1;
+		this.previewRequestGate.invalidate();
 		const item = this.findSelectedItem();
 		this.cardHostElement.empty();
 		this.diagnosticsElement.empty();
 		this.previewPages = [];
 		this.unfitPageIndexes = new Set<number>();
 		this.currentArtworkResourcePath = undefined;
+		this.currentArtworkRevisionFingerprint = undefined;
+		this.currentPreviewPlanKey = undefined;
 		this.updatePageNavigation();
 		this.openSourceButton.disabled = !item;
 		this.addToQueueButton.disabled = !item;
@@ -399,50 +463,219 @@ export class CardForgeView extends ItemView {
 			this.cardHostElement.createDiv({ cls: 'ttrpg-card-forge__preview-empty', text: 'Select an item to preview its card.' });
 			return;
 		}
+		const lookup = this.beginPhysicalPlanLookup(item);
+		this.currentPreviewPlanKey = lookup.identity.key;
+		if (!lookup.indexIsCurrent || !lookup.promise) {
+			this.cardHostElement.createDiv({
+				cls: 'ttrpg-card-forge__preview-empty',
+				text: 'Updating the item index…',
+			});
+			return;
+		}
+		const requestToken = this.previewRequestGate.begin(lookup.identity.key);
+		if (lookup.completed) {
+			this.applyPhysicalPlanToPreview(
+				item,
+				lookup,
+				lookup.completed,
+				generation,
+				requestToken,
+			);
+			return;
+		}
 		this.cardHostElement.createDiv({ cls: 'ttrpg-card-forge__preview-empty', text: 'Planning physical card pages…' });
-		void this.planAndRenderPreview(item, generation);
+		void this.planAndRenderPreview(item, lookup, generation, requestToken);
 	}
 
-	private async planAndRenderPreview(item: ItemCardData, generation: number): Promise<void> {
+	private async planAndRenderPreview(
+		item: ItemCardData,
+		lookup: PhysicalPlanLookup,
+		generation: number,
+		requestToken: LatestRequestToken<string>,
+	): Promise<void> {
 		if (!this.cardHostElement) {
 			return;
 		}
 		try {
-			const plan = await this.getPhysicalPlan(item);
-			if (generation !== this.previewGeneration) {
+			if (!lookup.promise) {
 				return;
 			}
-			this.previewPages = plan.pages;
-			this.unfitPageIndexes = plan.unfitPageIndexes;
-			this.currentArtworkResourcePath = getArtworkResourcePath(this.app, item);
-			this.currentPageIndex = Math.min(this.currentPageIndex, Math.max(0, plan.pages.length - 1));
-			this.renderCurrentPage(generation);
+			const plan = await lookup.promise;
+			if (
+				generation !== this.previewGeneration
+				|| this.selectedFilePath !== item.filePath
+				|| this.currentPreviewPlanKey !== lookup.identity.key
+				|| !this.previewRequestGate.isCurrent(requestToken)
+			) {
+				return;
+			}
+			this.applyPhysicalPlanToPreview(
+				item,
+				lookup,
+				plan,
+				generation,
+				requestToken,
+			);
 		} catch (error) {
 			console.error('TTRPG Card Forge: physical card planning failed', error);
-			if (generation === this.previewGeneration && this.cardHostElement) {
+			if (
+				generation === this.previewGeneration
+				&& this.currentPreviewPlanKey === lookup.identity.key
+				&& this.previewRequestGate.isCurrent(requestToken)
+				&& this.cardHostElement
+			) {
+				this.currentPreviewPlanKey = undefined;
 				this.cardHostElement.empty();
 				this.cardHostElement.createDiv({ cls: 'ttrpg-card-forge__preview-empty', text: 'Physical card planning failed. See the developer console.' });
 			}
 		}
 	}
 
-	private getPhysicalPlan(item: ItemCardData): Promise<FittedItemCardPlan> {
-		let plan = this.physicalPlanCache.get(item.filePath);
-		if (!plan) {
-			plan = this.cardFitService.fit(
-				this.containerEl.ownerDocument,
-				item,
-				getArtworkResourcePath(this.app, item),
-			);
-			this.physicalPlanCache.set(item.filePath, plan);
+	private applyPhysicalPlanToPreview(
+		item: ItemCardData,
+		lookup: PhysicalPlanLookup,
+		plan: FittedItemCardPlan,
+		generation: number,
+		requestToken: LatestRequestToken<string>,
+	): void {
+		if (
+			generation !== this.previewGeneration
+			|| this.selectedFilePath !== item.filePath
+			|| this.currentPreviewPlanKey !== lookup.identity.key
+			|| !this.previewRequestGate.isCurrent(requestToken)
+		) {
+			return;
 		}
-		return plan;
+		this.previewPages = plan.pages;
+		this.unfitPageIndexes = plan.unfitPageIndexes;
+		this.currentArtworkResourcePath = lookup.artworkResourcePath;
+		this.currentArtworkRevisionFingerprint = lookup.artworkRevisionFingerprint;
+		this.currentPageIndex = Math.min(
+			this.currentPageIndex,
+			Math.max(0, plan.pages.length - 1),
+		);
+		this.renderCurrentPage();
 	}
 
-	private renderCurrentPage(generation: number): void {
+	private beginPhysicalPlanLookup(item: ItemCardData): PhysicalPlanLookup {
+		const trace = this.planningPerformance.start(item.name, 'physical-plan');
+		const request = this.createPhysicalPlanRequest(item, trace);
+		if (!request.indexIsCurrent) {
+			trace?.finish({ cacheStatus: 'miss' });
+			return {
+				...request,
+				cacheStatus: 'miss',
+			};
+		}
+		const cacheStatus = this.physicalPlanCache.getStatus(request.identity);
+		const completed = cacheStatus === 'hit'
+			? this.physicalPlanCache.peek(request.identity)
+			: undefined;
+		if (completed) {
+			trace?.finish({
+				cacheStatus,
+				pageCount: completed.pages.length,
+				planSignature: serializeFittedItemCardPlanSignature(completed),
+			});
+			return {
+				...request,
+				cacheStatus,
+				completed,
+				promise: Promise.resolve(completed),
+			};
+		}
+		const plan = this.physicalPlanCache.getOrCreate(
+				request.identity,
+				() => this.cardFitService.fit(
+					this.containerEl.ownerDocument,
+					item,
+					request.artworkResourcePath,
+					trace,
+					request.artworkRevisionFingerprint,
+				),
+			);
+		const tracedPlan = plan.then(
+			(result) => {
+				trace?.finish({
+					cacheStatus,
+					pageCount: result.pages.length,
+					planSignature: serializeFittedItemCardPlanSignature(result),
+				});
+				return result;
+			},
+			(error: unknown) => {
+				trace?.finish({ cacheStatus });
+				throw error;
+			},
+		);
+		return {
+			...request,
+			cacheStatus,
+			promise: tracedPlan,
+		};
+	}
+
+	private createPhysicalPlanRequest(
+		item: ItemCardData,
+		trace?: ReturnType<PlanningPerformanceMonitor['start']>,
+	): Pick<
+		PhysicalPlanLookup,
+		'identity' | 'indexIsCurrent' | 'artworkResourcePath' | 'artworkRevisionFingerprint'
+	> {
+		const resolveArtwork = () => resolveArtworkDescriptor(this.app, item);
+		const artwork = trace
+			? trace.measure('artworkResolution', resolveArtwork)
+			: resolveArtwork();
+		const createRequest = () => {
+			const indexedSourceRevision = this.itemIndex.getSourceRevision(item.filePath);
+			const sourceFile = this.app.vault.getFileByPath(item.filePath);
+			const indexIsCurrent = isIndexedPlanningInputCurrent(
+				indexedSourceRevision,
+				sourceFile
+					? {
+						modifiedTime: sourceFile.stat.mtime,
+						size: sourceFile.stat.size,
+					}
+					: undefined,
+				item.hasImage,
+				Boolean(artwork),
+			);
+			const identity = createPhysicalPlanCacheIdentity({
+				item,
+				sourceFingerprint: this.itemIndex.getSourceFingerprint(item.filePath)
+					?? createEffectiveItemFingerprint(item),
+				...(artwork
+					? {
+						artworkFingerprint: {
+							filePath: artwork.filePath,
+							modifiedTime: artwork.modifiedTime,
+							size: artwork.size,
+						},
+					}
+					: {}),
+				renderSettingsFingerprint: PHYSICAL_PLAN_RENDER_SETTINGS_FINGERPRINT,
+			});
+			return {
+				identity,
+				indexIsCurrent,
+				...(artwork
+					? {
+						artworkResourcePath: artwork.resourcePath,
+						artworkRevisionFingerprint: artwork.revisionFingerprint,
+					}
+					: {}),
+			};
+		};
+		return trace
+			? trace.measure('itemDataResolution', createRequest)
+			: createRequest();
+	}
+
+	private renderCurrentPage(): void {
 		if (!this.cardHostElement) {
 			return;
 		}
+		const pageRenderGeneration = ++this.pageRenderGeneration;
 		const page = this.previewPages[this.currentPageIndex];
 		if (!page) {
 			return;
@@ -453,7 +686,26 @@ export class CardForgeView extends ItemView {
 		const viewport = this.cardHostElement.createDiv({ cls: 'ttrpg-card-forge__scaled-card-viewport' });
 		const physicalHost = viewport.createDiv({ cls: 'ttrpg-card-forge__scaled-card' });
 		applyCanonicalCardSize(physicalHost);
-		const rendered = this.cardRenderer.render(physicalHost, page, this.currentArtworkResourcePath);
+		const renderTrace = this.planningPerformance.start(page.item.name, 'preview-render');
+		const rendered = renderTrace
+			? renderTrace.measure(
+				'previewRendering',
+				() => this.cardRenderer.render(
+					physicalHost,
+					page,
+					this.currentArtworkResourcePath,
+					this.currentArtworkRevisionFingerprint,
+				),
+			)
+			: this.cardRenderer.render(
+				physicalHost,
+				page,
+				this.currentArtworkResourcePath,
+				this.currentArtworkRevisionFingerprint,
+			);
+		void rendered.artworkReady.finally(() => renderTrace?.finish({
+			pageCount: page.pageCount,
+		}));
 		const scalePhysicalCard = (): void => {
 			if (!this.cardHostElement) {
 				return;
@@ -467,35 +719,127 @@ export class CardForgeView extends ItemView {
 			page,
 			rendered,
 			this.currentArtworkResourcePath,
-			generation,
+			pageRenderGeneration,
 			scalePhysicalCard,
 		);
 	}
 
 	private renderQueue(): void {
 		const generation = ++this.queuePlanGeneration;
-		const entries = this.printQueue.getEntries();
-		this.currentQueuePlan = [];
-		this.renderQueuePlanningState(entries.length);
-		void this.planQueue(generation);
-	}
-
-	private async planQueue(generation: number): Promise<void> {
+		this.queueRequestGate.invalidate();
 		const entries = this.printQueue.getEntries();
 		const items = this.itemIndex.getItems();
 		const itemsByPath = new Map(items.map((item) => [item.filePath, item]));
-		const plans = new Map<string, PhysicalItemPlan>();
-		try {
-			for (const entry of entries) {
-				const item = itemsByPath.get(entry.filePath);
-				if (item && !plans.has(item.filePath)) {
-					const plan = await this.getPhysicalPlan(item);
-					plans.set(item.filePath, plan);
-				}
+		const warmPlans = new Map<string, PhysicalItemPlan>();
+		const queueItemPaths = new Set<string>();
+		let indexIsStale = false;
+		const currentPlansByPath = new Map(
+			this.currentQueuePlan
+				.filter((resolved) => resolved.item && !resolved.unavailable)
+				.map((resolved) => [resolved.entry.filePath, resolved] as const),
+		);
+		for (const entry of entries) {
+			const item = itemsByPath.get(entry.filePath);
+			if (!item || queueItemPaths.has(item.filePath)) {
+				continue;
 			}
+			queueItemPaths.add(item.filePath);
+			const request = this.createPhysicalPlanRequest(item);
+			if (!request.indexIsCurrent) {
+				indexIsStale = true;
+				continue;
+			}
+			const currentPlan = currentPlansByPath.get(item.filePath);
+			if (currentPlan?.cacheKey === request.identity.key) {
+				warmPlans.set(item.filePath, {
+					pages: currentPlan.pages,
+					unfitPageIndexes: currentPlan.unfitPageIndexes,
+					cacheKey: currentPlan.cacheKey,
+					...(currentPlan.artworkResourcePath
+						? { artworkResourcePath: currentPlan.artworkResourcePath }
+						: {}),
+					...(currentPlan.artworkRevisionFingerprint
+						? {
+							artworkRevisionFingerprint:
+								currentPlan.artworkRevisionFingerprint,
+						}
+						: {}),
+				});
+				continue;
+			}
+			const completed = this.physicalPlanCache.peek(request.identity);
+			if (completed) {
+				warmPlans.set(
+					item.filePath,
+					this.createQueuePhysicalPlan(request, completed),
+				);
+			}
+		}
+		if (indexIsStale) {
+			this.currentQueuePlan = [];
+			this.renderQueuePlanningState(entries.length, 'Updating the item index…');
+			return;
+		}
+
+		if (warmPlans.size === queueItemPaths.size) {
+			this.currentQueuePlan = resolvePrintQueue(entries, items, warmPlans);
+			this.renderResolvedQueue();
+			return;
+		}
+
+		this.currentQueuePlan = [];
+		this.renderQueuePlanningState(entries.length);
+		const requestToken = this.queueRequestGate.begin(generation);
+		void this.planQueue(requestToken, entries, items, warmPlans);
+	}
+
+	private async planQueue(
+		requestToken: LatestRequestToken<number>,
+		entries: ReturnType<PrintQueueService['getEntries']>,
+		items: readonly ItemCardData[],
+		warmPlans: ReadonlyMap<string, PhysicalItemPlan>,
+	): Promise<void> {
+		let plans: Map<string, PhysicalItemPlan>;
+		try {
+			const itemsByPath = new Map(items.map((item) => [item.filePath, item]));
+			const availableEntries = entries.filter(
+				(entry) => itemsByPath.has(entry.filePath),
+			);
+			plans = await resolveQueuePlanMap(
+				availableEntries,
+				warmPlans,
+				async (filePath) => {
+					const item = itemsByPath.get(filePath);
+					if (!item) {
+						throw new Error(`Indexed queue item disappeared: ${filePath}`);
+					}
+					const lookup = this.beginPhysicalPlanLookup(item);
+					if (!lookup.indexIsCurrent || !lookup.promise) {
+						throw new ItemIndexStaleError();
+					}
+					return this.createQueuePhysicalPlan(
+						lookup,
+						await lookup.promise,
+					);
+				},
+				() => this.queueRequestGate.isCurrent(requestToken),
+			);
 		} catch (error) {
+			if (error instanceof ItemIndexStaleError) {
+				if (this.queueRequestGate.isCurrent(requestToken)) {
+					this.currentQueuePlan = [];
+					this.renderQueuePlanningState(
+						entries.length,
+						'Updating the item index…',
+					);
+				}
+				return;
+			}
 			console.error('TTRPG Card Forge: print queue planning failed', error);
-			if (generation === this.queuePlanGeneration && this.queueStatusElement) {
+			if (
+				this.queueRequestGate.isCurrent(requestToken)
+				&& this.queueStatusElement
+			) {
 				this.currentQueuePlan = [];
 				this.queueStatusElement.setText('Queue planning failed. See the developer console.');
 				this.updateExportControls();
@@ -503,22 +847,49 @@ export class CardForgeView extends ItemView {
 			return;
 		}
 
-		if (generation !== this.queuePlanGeneration) {
+		if (!this.queueRequestGate.isCurrent(requestToken)) {
 			return;
 		}
 		this.currentQueuePlan = resolvePrintQueue(entries, items, plans);
 		this.renderResolvedQueue();
 	}
 
-	private renderQueuePlanningState(entryCount: number): void {
+	private createQueuePhysicalPlan(
+		request: Pick<
+			PhysicalPlanLookup,
+			'identity' | 'artworkResourcePath' | 'artworkRevisionFingerprint'
+		>,
+		plan: FittedItemCardPlan,
+	): PhysicalItemPlan {
+		return {
+			pages: plan.pages,
+			unfitPageIndexes: plan.unfitPageIndexes,
+			cacheKey: request.identity.key,
+			...(request.artworkResourcePath
+				? { artworkResourcePath: request.artworkResourcePath }
+				: {}),
+			...(request.artworkRevisionFingerprint
+				? {
+					artworkRevisionFingerprint:
+						request.artworkRevisionFingerprint,
+				}
+				: {}),
+		};
+	}
+
+	private renderQueuePlanningState(
+		entryCount: number,
+		message = 'Planning physical cards…',
+	): void {
 		if (!this.queueListElement || !this.queueSummaryElement) {
 			return;
 		}
 		this.queueListElement.empty();
-		this.queueSummaryElement.setText(entryCount > 0 ? 'Planning physical cards…' : '0 item types · 0 copies · 0 physical cards · 0 A4 pages');
+		this.queueSummaryElement.setText(entryCount > 0 ? message : '0 item types · 0 copies · 0 physical cards · 0 A4 pages');
 		if (entryCount === 0) {
 			this.queueListElement.createDiv({ cls: 'ttrpg-card-forge__empty', text: 'Add an item from the card preview.' });
 		}
+		this.renderSheetPreview();
 		this.updateExportControls();
 	}
 
@@ -586,7 +957,12 @@ export class CardForgeView extends ItemView {
 			const card = cards[start + slot];
 			const host = this.sheetGridElement.createDiv({ cls: 'ttrpg-card-forge__sheet-slot' });
 			if (card) {
-				this.cardRenderer.render(host, card.page, getArtworkResourcePath(this.app, card.page.item));
+				this.cardRenderer.render(
+					host,
+					card.page,
+					card.artworkResourcePath,
+					card.artworkRevisionFingerprint,
+				);
 			} else {
 				host.addClass('is-empty');
 			}
@@ -607,6 +983,11 @@ export class CardForgeView extends ItemView {
 
 	private async exportPdf(): Promise<void> {
 		if (this.exportInProgress || !this.queueStatusElement) {
+			return;
+		}
+		if (!this.isCurrentQueuePlanInput()) {
+			this.renderQueue();
+			new Notice('Card inputs changed. Wait for the print queue to finish planning, then export again.');
 			return;
 		}
 		this.exportInProgress = true;
@@ -641,6 +1022,28 @@ export class CardForgeView extends ItemView {
 		}
 	}
 
+	private isCurrentQueuePlanInput(): boolean {
+		const availablePlans = this.currentQueuePlan.flatMap((resolved) =>
+			resolved.item && !resolved.unavailable
+				? [{
+					filePath: resolved.item.filePath,
+					...(resolved.cacheKey ? { cacheKey: resolved.cacheKey } : {}),
+				}]
+				: [],
+		);
+		const itemsByPath = new Map(
+			this.itemIndex.getItems().map((item) => [item.filePath, item]),
+		);
+		return areQueuePlanInputsCurrent(availablePlans, (filePath) => {
+			const item = itemsByPath.get(filePath);
+			if (!item) {
+				return undefined;
+			}
+			const request = this.createPhysicalPlanRequest(item);
+			return request.indexIsCurrent ? request.identity.key : undefined;
+		});
+	}
+
 	private renderExportProgress(progress: PdfExportProgress): void {
 		if (!this.queueStatusElement) {
 			return;
@@ -667,10 +1070,14 @@ export class CardForgeView extends ItemView {
 	}
 
 	private showRelativePage(offset: number): void {
-		const next = Math.min(Math.max(0, this.currentPageIndex + offset), Math.max(0, this.previewPages.length - 1));
+		const next = selectRelativePageIndex(
+			this.currentPageIndex,
+			offset,
+			this.previewPages.length,
+		);
 		if (next !== this.currentPageIndex) {
 			this.currentPageIndex = next;
-			this.renderCurrentPage(this.previewGeneration);
+			this.renderCurrentPage();
 		}
 	}
 
@@ -694,7 +1101,7 @@ export class CardForgeView extends ItemView {
 		page: ItemCardPage,
 		renderedCard: RenderedItemCard,
 		artworkResourcePath: string | undefined,
-		generation: number,
+		pageRenderGeneration: number,
 		onResize: () => void,
 	): void {
 		if (!this.diagnosticsElement) {
@@ -702,7 +1109,10 @@ export class CardForgeView extends ItemView {
 		}
 		let artworkResult: ArtworkLoadResult | undefined;
 		const update = (): void => {
-			if (!this.diagnosticsElement || generation !== this.previewGeneration) {
+			if (
+				!this.diagnosticsElement
+				|| pageRenderGeneration !== this.pageRenderGeneration
+			) {
 				return;
 			}
 			const hasOverflow = renderedCard.hasOverflow() || this.unfitPageIndexes.has(page.pageIndex);
@@ -732,7 +1142,7 @@ export class CardForgeView extends ItemView {
 			this.cardResizeObserver.observe(this.cardHostElement);
 		}
 		void renderedCard.artworkReady.then((result) => {
-			if (generation === this.previewGeneration) {
+			if (pageRenderGeneration === this.pageRenderGeneration) {
 				artworkResult = result;
 				schedule();
 			}
@@ -826,4 +1236,11 @@ function humanizeSlug(value: string): string {
 		.split('-')
 		.map((part) => part ? `${part[0]?.toLocaleUpperCase()}${part.slice(1)}` : part)
 		.join(' ');
+}
+
+class ItemIndexStaleError extends Error {
+	constructor() {
+		super('The item index changed while physical cards were being planned.');
+		this.name = 'ItemIndexStaleError';
+	}
 }

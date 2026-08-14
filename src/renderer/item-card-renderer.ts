@@ -40,6 +40,7 @@ export class ItemCardRenderer {
 		container: HTMLElement,
 		page: ItemCardPage,
 		artworkResourcePath?: string,
+		artworkRevisionFingerprint?: string,
 	): RenderedItemCard {
 		container.replaceChildren();
 		const { item, layout } = page;
@@ -127,6 +128,7 @@ export class ItemCardRenderer {
 				item,
 				artworkResourcePath,
 				this.artworkBounds,
+				artworkRevisionFingerprint,
 			)
 			: Promise.resolve<ArtworkLoadResult>({ status: 'not-rendered' });
 
@@ -196,6 +198,7 @@ function renderArtwork(
 	item: ItemCardData,
 	artworkResourcePath: string,
 	artworkBounds: ArtworkBoundsService,
+	artworkRevisionFingerprint?: string,
 ): Promise<ArtworkLoadResult> {
 	const artwork = appendElement(content, 'figure', 'ttrpg-card-forge-card__artwork');
 	const image = appendElement(artwork, 'img');
@@ -206,7 +209,11 @@ function renderArtwork(
 
 	return new Promise((resolve) => {
 		image.addEventListener('load', () => {
-			void artworkBounds.getBounds(image, artworkResourcePath).then((bounds) => {
+			void artworkBounds.getBounds(
+				image,
+				artworkResourcePath,
+				artworkRevisionFingerprint,
+			).then((bounds) => {
 				const normalized = card.closest('.ttrpg-card-forge__measurement') === null
 					&& artworkBounds.applyVisibleBounds(image, artwork, bounds);
 				card.toggleClass('ttrpg-card-forge-card--artwork-normalized', normalized);

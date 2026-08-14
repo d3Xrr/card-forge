@@ -4,11 +4,17 @@ import test from 'node:test';
 import type { ItemCardData } from '../src/models/item';
 import {
 	balanceSparseFinalPage,
+	createMemoizedItemCardPagePlanner,
 	estimateBlocksLoad,
 	flattenPageContent,
 	planItemCardPages,
+	planPreparedItemCardPages,
+	prepareItemCardPlanningContext,
 	selectItemCardContentStrategy,
 } from '../src/renderer/item-card-planner';
+import { serializeItemCardPlanSignature } from '../src/renderer/item-card-plan-signature';
+import { ITEM_CARD_FIT_CAPACITY_SCALES } from '../src/renderer/item-card-fit-service';
+import { getAdaptiveBodyFontCandidates } from '../src/renderer/item-card-layout';
 import { getRenderablePageBlocks } from '../src/renderer/item-card-renderer';
 import {
 	parseSemanticMarkdown,
@@ -97,6 +103,111 @@ void test('detects Crafting as a structural heading section', () => {
 		{ type: 'paragraph', markdown: 'Creating this item requires a workshop.' },
 		{ type: 'unordered-list', items: ['**[Fluid].** Ectoplasm'] },
 	]);
+});
+
+void test('prepared semantic planning is exactly equivalent across the adaptive option matrix', () => {
+	const item = createItem({
+		description: [
+			'An opening paragraph with **formatted rules** and enough text to wrap.',
+			'',
+			'### Charges',
+			'',
+			'- First effect with a conditional benefit.',
+			'- Second effect with a different outcome.',
+			'',
+			'| Roll | Result |',
+			'| --- | --- |',
+			'| 1 | A compact result. |',
+			'| 2 | A longer result that exercises table fragmentation. |',
+			'',
+			'## Crafting',
+			'',
+			'Crafting requires a rare component and a specialized workshop.',
+		].join('\n'),
+		detail: 'Weapon (scimitar), very rare (requires attunement)',
+		damage: '1d6 slashing',
+		range: '5 feet',
+		properties: ['Finesse', 'Light'],
+		mastery: 'Nick',
+		weight: 3,
+	});
+	const context = prepareItemCardPlanningContext(item);
+	const contextBefore = structuredClone(context);
+	const memoized = createMemoizedItemCardPagePlanner(item, context);
+	const orientations = [undefined, 'landscape', 'portrait', 'square'] as const;
+	const artworkStates = [false, true] as const;
+	const artworkShares = [undefined, 20, 16] as const;
+
+	for (const artworkOrientation of orientations) {
+		for (const artworkAvailable of artworkStates) {
+			for (const bodyFontPoints of getAdaptiveBodyFontCandidates()) {
+				for (const capacityScale of ITEM_CARD_FIT_CAPACITY_SCALES) {
+					for (const artworkSharePercent of artworkShares) {
+						const options = {
+							...(artworkOrientation ? { artworkOrientation } : {}),
+							artworkAvailable,
+							bodyFontPoints,
+							capacityScale,
+							...(artworkSharePercent === undefined
+								? {}
+								: { artworkSharePercent }),
+						};
+						const reference = planItemCardPages(item, options);
+						const prepared = planPreparedItemCardPages(item, context, options);
+						const cached = memoized(options);
+						const label = JSON.stringify(options);
+						assert.equal(
+							serializeItemCardPlanSignature(prepared),
+							serializeItemCardPlanSignature(reference),
+							label,
+						);
+						assert.deepEqual(prepared, reference, label);
+						assert.deepEqual(cached, reference, label);
+					}
+				}
+			}
+		}
+	}
+	assert.deepEqual(context, contextBefore);
+});
+
+void test('memoized planning reuses default-capacity candidates from minimum planning', () => {
+	const item = createItem({
+		description: 'One paragraph.\n\nAnother paragraph.',
+	});
+	const planner = createMemoizedItemCardPagePlanner(
+		item,
+		prepareItemCardPlanningContext(item),
+	);
+	const minimumCandidate = planner({
+		artworkOrientation: 'landscape',
+		artworkAvailable: true,
+		bodyFontPoints: 9,
+	});
+	const adaptiveCandidate = planner({
+		artworkOrientation: 'landscape',
+		artworkAvailable: true,
+		bodyFontPoints: 9,
+		capacityScale: 1,
+	});
+	const differentCapacity = planner({
+		artworkOrientation: 'landscape',
+		artworkAvailable: true,
+		bodyFontPoints: 9,
+		capacityScale: 0.88,
+	});
+
+	assert.strictEqual(adaptiveCandidate, minimumCandidate);
+	assert.notStrictEqual(differentCapacity, minimumCandidate);
+	assert.deepEqual(
+		differentCapacity,
+		planItemCardPages(item, {
+			artworkOrientation: 'landscape',
+			artworkAvailable: true,
+			bodyFontPoints: 9,
+			capacityScale: 0.88,
+		}),
+	);
 });
 
 void test('plans one source-bearing page for a short item', () => {
