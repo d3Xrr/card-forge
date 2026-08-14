@@ -79,7 +79,13 @@ void test('preview-approved canonical pages are the same pages consumed by expor
 	const resolved = resolvePrintQueue(
 		[{ id: 'apparatus', filePath: item.filePath, quantity: 1 }],
 		[item],
-		new Map([[item.filePath, { pages, unfitPageIndexes: EMPTY_SET }]]),
+		new Map([[item.filePath, {
+			pages,
+			unfitPageIndexes: EMPTY_SET,
+			cacheKey: 'effective-apparatus-v1',
+			artworkResourcePath: 'app://art/apparatus.webp',
+			artworkRevisionFingerprint: 'apparatus-art-v1',
+		}]]),
 	);
 
 	assert.deepEqual(getInvalidQueueEntries(resolved), []);
@@ -87,6 +93,11 @@ void test('preview-approved canonical pages are the same pages consumed by expor
 		flattenPrintQueue(resolved).map((card) => card.page),
 		pages,
 	);
+	assert.equal(resolved[0]?.cacheKey, 'effective-apparatus-v1');
+	assert.ok(flattenPrintQueue(resolved).every((card) =>
+		card.artworkResourcePath === 'app://art/apparatus.webp'
+		&& card.artworkRevisionFingerprint === 'apparatus-art-v1',
+	));
 });
 
 function createItem(filePath: string, name: string): ItemCardData {

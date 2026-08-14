@@ -13,17 +13,35 @@ export interface VisibleArtworkBounds extends PixelBounds {
 const MAX_ANALYSIS_DIMENSION = 512;
 const MAX_DISPLAY_DIMENSION = 1600;
 const ANALYSIS_PADDING_PIXELS = 1;
+export const DEFAULT_ARTWORK_BOUNDS_CACHE_CAPACITY = 128;
 
 export class ArtworkBoundsCache<T> {
 	private readonly values = new Map<string, Promise<T>>();
 
+	constructor(
+		readonly capacity = DEFAULT_ARTWORK_BOUNDS_CACHE_CAPACITY,
+	) {
+		if (!Number.isInteger(capacity) || capacity < 1) {
+			throw new RangeError('Artwork bounds cache capacity must be a positive integer.');
+		}
+	}
+
 	getOrCreate(key: string, factory: () => Promise<T>): Promise<T> {
 		const existing = this.values.get(key);
 		if (existing) {
+			this.values.delete(key);
+			this.values.set(key, existing);
 			return existing;
 		}
 		const value = factory();
 		this.values.set(key, value);
+		while (this.values.size > this.capacity) {
+			const oldestKey = this.values.keys().next().value;
+			if (oldestKey === undefined) {
+				break;
+			}
+			this.values.delete(oldestKey);
+		}
 		return value;
 	}
 
@@ -38,12 +56,16 @@ export class ArtworkBoundsService {
 	getBounds(
 		image: HTMLImageElement,
 		artworkPath: string,
+		artworkRevisionFingerprint?: string,
 	): Promise<VisibleArtworkBounds | undefined> {
 		if (/\.gif(?:[?#]|$)/iu.test(artworkPath)) {
 			return Promise.resolve(undefined);
 		}
 		return this.cache.getOrCreate(
-			artworkPath,
+			createArtworkBoundsCacheKey(
+				artworkPath,
+				artworkRevisionFingerprint,
+			),
 			async () => {
 				try {
 					return await this.analyzeImage(image);
@@ -152,6 +174,16 @@ export class ArtworkBoundsService {
 			canvas.remove();
 		}
 	}
+}
+
+export function createArtworkBoundsCacheKey(
+	resourcePath: string,
+	artworkRevisionFingerprint?: string,
+): string {
+	return JSON.stringify({
+		resourcePath,
+		artworkRevisionFingerprint: artworkRevisionFingerprint ?? null,
+	});
 }
 
 export function calculateVisibleAlphaBounds(

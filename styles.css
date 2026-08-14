@@ -741,6 +741,26 @@
 	padding-inline-start: 0.1em;
 }
 
+.ttrpg-card-forge-card ul.ttrpg-card-forge-card__list {
+	list-style: none;
+}
+
+.ttrpg-card-forge-card ul.ttrpg-card-forge-card__list > li {
+	position: relative;
+}
+
+.ttrpg-card-forge-card ul.ttrpg-card-forge-card__list > li::before {
+	position: absolute;
+	top: 0.65em;
+	inset-inline-start: -0.9em;
+	width: 0.38em;
+	height: 0.38em;
+	transform: translateY(-50%);
+	border-radius: 50%;
+	background: currentColor;
+	content: "";
+}
+
 .ttrpg-card-forge-card__table {
 	width: 100%;
 	margin: 0 0 0.72em;

@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { App } from 'obsidian';
 
+import type { ItemCardData } from '../src/models/item';
 import {
 	ArtworkBoundsCache,
 	calculateVisibleAlphaBounds,
+	createArtworkBoundsCacheKey,
 	projectAnalysisBounds,
 } from '../src/renderer/artwork-bounds';
+import {
+	createArtworkRevisionFingerprint,
+	resolveArtworkDescriptor,
+} from '../src/services/artwork-resolver';
 
 void test('detects artwork with no transparent padding', () => {
 	const rgba = createPixels(3, 2, [
@@ -50,7 +57,7 @@ void test('projects downscaled bounds outward so visible pixels are never exclud
 	assert.ok(projected.y + projected.height >= 400);
 });
 
-void test('caches artwork-bound analysis by path for the session', async () => {
+void test('deduplicates artwork-bound analysis and caches safe fallbacks', async () => {
 	const cache = new ArtworkBoundsCache<number>();
 	let calls = 0;
 	const factory = async (): Promise<number> => {
@@ -63,6 +70,113 @@ void test('caches artwork-bound analysis by path for the session', async () => {
 	assert.equal(await second, 42);
 	assert.equal(calls, 1);
 	assert.equal(cache.size, 1);
+
+	const fallbackCache = new ArtworkBoundsCache<undefined>();
+	let fallbackCalls = 0;
+	const firstFallback = fallbackCache.getOrCreate('broken.webp', async () => {
+		fallbackCalls += 1;
+		return undefined;
+	});
+	const secondFallback = fallbackCache.getOrCreate('broken.webp', async () => {
+		fallbackCalls += 1;
+		return undefined;
+	});
+	assert.strictEqual(firstFallback, secondFallback);
+	assert.equal(await secondFallback, undefined);
+	assert.equal(fallbackCalls, 1);
+});
+
+void test('evicts least recently used artwork bounds deterministically', async () => {
+	const cache = new ArtworkBoundsCache<number>(2);
+	let secondCalls = 0;
+	await cache.getOrCreate('first', async () => 1);
+	await cache.getOrCreate('second', async () => {
+		secondCalls += 1;
+		return 2;
+	});
+	await cache.getOrCreate('first', async () => 10);
+	await cache.getOrCreate('third', async () => 3);
+	assert.equal(cache.size, 2);
+	assert.equal(await cache.getOrCreate('first', async () => 10), 1);
+	assert.equal(await cache.getOrCreate('second', async () => {
+		secondCalls += 1;
+		return 20;
+	}), 20);
+	assert.equal(secondCalls, 2);
+	assert.equal(cache.size, 2);
+});
+
+void test('artwork cache keys change with the resolved vault file revision', () => {
+	const firstRevision = createArtworkRevisionFingerprint({
+		filePath: 'art/items/example.webp',
+		modifiedTime: 100,
+		size: 200,
+	});
+	const repeatedRevision = createArtworkRevisionFingerprint({
+		filePath: 'art/items/example.webp',
+		modifiedTime: 100,
+		size: 200,
+	});
+	const changedRevision = createArtworkRevisionFingerprint({
+		filePath: 'art/items/example.webp',
+		modifiedTime: 101,
+		size: 200,
+	});
+	assert.equal(repeatedRevision, firstRevision);
+	assert.equal(
+		createArtworkBoundsCacheKey('app://vault/example.webp', repeatedRevision),
+		createArtworkBoundsCacheKey('app://vault/example.webp', firstRevision),
+	);
+	assert.notEqual(
+		createArtworkBoundsCacheKey('app://vault/example.webp', changedRevision),
+		createArtworkBoundsCacheKey('app://vault/example.webp', firstRevision),
+	);
+	assert.notEqual(
+		createArtworkBoundsCacheKey('app://vault/other.webp', firstRevision),
+		createArtworkBoundsCacheKey('app://vault/example.webp', firstRevision),
+	);
+});
+
+void test('resolves artwork resource and vault revision as one descriptor', () => {
+	const artworkFile = {
+		path: 'art/items/example.webp',
+		extension: 'webp',
+		stat: { mtime: 100, size: 200 },
+	};
+	const app = {
+		vault: {
+			getFileByPath: () => artworkFile,
+			getResourcePath: () => 'app://vault/example.webp',
+		},
+		metadataCache: {
+			getFirstLinkpathDest: () => null,
+		},
+	} as unknown as App;
+	const item: ItemCardData = {
+		filePath: 'items/example.md',
+		name: 'Example Item',
+		description: 'Rules.',
+		imagePath: artworkFile.path,
+		hasImage: true,
+		rawTags: [],
+	};
+
+	assert.deepEqual(resolveArtworkDescriptor(app, item), {
+		resourcePath: 'app://vault/example.webp',
+		filePath: artworkFile.path,
+		modifiedTime: 100,
+		size: 200,
+		revisionFingerprint: createArtworkRevisionFingerprint({
+			filePath: artworkFile.path,
+			modifiedTime: 100,
+			size: 200,
+		}),
+	});
+});
+
+void test('rejects invalid artwork cache capacities', () => {
+	assert.throws(() => new ArtworkBoundsCache(0), RangeError);
+	assert.throws(() => new ArtworkBoundsCache(1.5), RangeError);
 });
 
 function createPixels(
