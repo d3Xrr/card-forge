@@ -16,7 +16,7 @@ Phase 4B adds non-destructive, print-only live editing on top of the determinist
 - Provides responsive **Preview** and **Edit** modes with debounced canonical replanning while the last completed preview stays visible.
 - Supports print-only overrides for title, type, rarity, attunement, rules Markdown, structured statistics, artwork, source text, and same-note variants.
 - Recognizes `///CARD BREAK///` on its own line as an explicit new physical-card boundary; the delimiter is never rendered.
-- Uses local files or explicitly requested HTTPS artwork as session-only ObjectURLs by default, while also supporting source art, no art, and existing vault-relative art. **Save a copy to vault** opts into a collision-safe file under `Card Forge Assets`.
+- Uses local files or explicitly requested HTTPS artwork as session-only ObjectURLs by default, while also supporting source art, no art, and existing vault-relative art. **Save to vault** opts into a collision-safe file under `Card Forge Assets`.
 - Adds selected items to a persistent print queue only when the user requests it.
 - Persists each queue entry's overrides and exposes them again through its **Edit** action after reload.
 - Supports quantity changes, removal, clearing, and accessible move-up/move-down ordering.
@@ -82,7 +82,7 @@ npm run lint
 npm run build
 ```
 
-The PDF pipeline uses the browser-compatible `html-to-image` and `pdf-lib` packages bundled into `main.js`. It does not use a CDN, remote service, system print dialog, private Electron API, or network request at export time. An HTTPS request occurs only when the user explicitly chooses **Temporary HTTPS URL**; the image is downloaded once into a runtime ObjectURL before rendering. It is written to the vault only when **Save a copy to vault for future use** is checked.
+The PDF pipeline uses the browser-compatible `html-to-image` and `pdf-lib` packages bundled into `main.js`. It does not use a CDN, remote service, system print dialog, private Electron API, or network request at export time. An HTTPS request occurs only when the user explicitly chooses **Temporary HTTPS URL** and activates **Use image**; the image is downloaded once into a runtime ObjectURL before rendering. It is written to the vault only when **Save to vault** is checked.
 
 ## Local development deploy
 

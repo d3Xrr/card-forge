@@ -82,6 +82,19 @@ import type {
 	TemporaryArtworkAsset,
 	TemporaryArtworkStore,
 } from '../services/temporary-artwork-store';
+import {
+	createMissingArtworkWarning,
+	createPreviewModeState,
+	createPreviewStatusChips,
+	createTemporaryArtworkStatus,
+	createVariantPreservationNotice,
+	getArtworkEditorPresentation,
+	isArtworkUseKey,
+	resolveRulesDraftOverride,
+	validateVaultArtworkPath,
+	type ArtworkEditorMode,
+	type VariantPreservationNotice,
+} from '../services/live-edit-ui';
 
 export const CARD_FORGE_VIEW_TYPE = 'ttrpg-card-forge-view';
 const PHYSICAL_PLAN_RENDER_SETTINGS_FINGERPRINT = 'card-render-settings-v3-live-edit';
@@ -104,8 +117,6 @@ interface EffectiveCardInput {
 	overrideFingerprint: string;
 	variant?: ItemCardVariant;
 }
-
-type ArtworkEditorMode = 'source' | 'none' | 'vault' | 'local' | 'https';
 
 export class CardForgeView extends ItemView {
 	private readonly artworkBounds = new ArtworkBoundsService();
@@ -169,9 +180,12 @@ export class CardForgeView extends ItemView {
 	private editingQueueEntryId: string | undefined;
 	private readonly editorPreviewDebounce = new DebouncedAction(350);
 	private readonly temporaryArtworkOwner = `view-${createRuntimeId()}`;
-	private variantRulesNotice: string | undefined;
+	private variantRulesNotice: VariantPreservationNotice | undefined;
 	private artworkLoadGeneration = 0;
 	private artworkEditorMode: ArtworkEditorMode | undefined;
+	private artworkVaultPathDraft: string | undefined;
+	private artworkHttpsUrl = '';
+	private persistArtworkToVault = false;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -350,23 +364,23 @@ export class CardForgeView extends ItemView {
 			text: 'Card preview',
 			cls: 'ttrpg-card-forge__panel-heading',
 		});
-		const modeToggle = previewHeader.createDiv({ cls: 'ttrpg-card-forge__mode-toggle' });
+		const previewToolbar = previewHeader.createDiv({
+			cls: 'ttrpg-card-forge__preview-toolbar',
+			attr: { role: 'toolbar', 'aria-label': 'Card preview controls' },
+		});
+		const modeToggle = previewToolbar.createDiv({
+			cls: 'ttrpg-card-forge__mode-toggle',
+			attr: { 'aria-label': 'Preview mode' },
+		});
 		this.previewModeButton = modeToggle.createEl('button', {
 			text: 'Preview',
-			attr: { type: 'button' },
+			attr: { type: 'button', 'aria-pressed': 'true' },
 		});
 		this.editModeButton = modeToggle.createEl('button', {
 			text: 'Edit card',
-			attr: { type: 'button' },
+			attr: { type: 'button', 'aria-pressed': 'false' },
 		});
-		this.previewIndicatorElement = previewHeader.createSpan({
-			cls: 'ttrpg-card-forge__preview-indicator',
-		});
-		this.registerDomEvent(this.previewModeButton, 'click', () => this.setEditMode(false));
-		this.registerDomEvent(this.editModeButton, 'click', () => this.setEditMode(true));
-		this.editorElement = preview.createDiv({ cls: 'ttrpg-card-forge__editor' });
-		this.editorElement.hidden = true;
-		this.pageNavigationElement = preview.createDiv({
+		this.pageNavigationElement = previewToolbar.createDiv({
 			cls: 'ttrpg-card-forge__page-navigation',
 			attr: { 'aria-label': 'Card page navigation' },
 		});
@@ -382,6 +396,14 @@ export class CardForgeView extends ItemView {
 			cls: 'ttrpg-card-forge__page-button',
 			attr: { type: 'button', 'aria-label': 'Next card page' },
 		});
+		this.previewIndicatorElement = previewToolbar.createDiv({
+			cls: 'ttrpg-card-forge__preview-indicator',
+			attr: { 'aria-label': 'Card state' },
+		});
+		this.registerDomEvent(this.previewModeButton, 'click', () => this.setEditMode(false));
+		this.registerDomEvent(this.editModeButton, 'click', () => this.setEditMode(true));
+		this.editorElement = preview.createDiv({ cls: 'ttrpg-card-forge__editor' });
+		this.editorElement.hidden = true;
 		this.cardHostElement = preview.createDiv({ cls: 'ttrpg-card-forge__card-host' });
 		this.diagnosticsElement = preview.createDiv({ cls: 'ttrpg-card-forge__diagnostics' });
 		const actions = preview.createDiv({ cls: 'ttrpg-card-forge__preview-actions' });
@@ -536,6 +558,9 @@ export class CardForgeView extends ItemView {
 		this.artworkLoadGeneration += 1;
 		this.variantRulesNotice = undefined;
 		this.artworkEditorMode = undefined;
+		this.artworkVaultPathDraft = undefined;
+		this.artworkHttpsUrl = '';
+		this.persistArtworkToVault = false;
 		this.syncDraftTemporaryArtworkReferences();
 	}
 
@@ -545,8 +570,11 @@ export class CardForgeView extends ItemView {
 		}
 		this.editorElement.hidden = !this.isEditMode;
 		this.editorElement.parentElement?.toggleClass('is-editing', this.isEditMode);
-		this.previewModeButton?.toggleClass('is-active', !this.isEditMode);
-		this.editModeButton?.toggleClass('is-active', this.isEditMode);
+		const modeState = createPreviewModeState(this.isEditMode);
+		this.previewModeButton?.toggleClass('is-active', modeState.previewActive);
+		this.editModeButton?.toggleClass('is-active', modeState.editActive);
+		this.previewModeButton?.setAttribute('aria-pressed', String(modeState.previewActive));
+		this.editModeButton?.setAttribute('aria-pressed', String(modeState.editActive));
 		this.editorElement.empty();
 		if (!this.isEditMode) {
 			return;
@@ -571,10 +599,11 @@ export class CardForgeView extends ItemView {
 			}
 			variantSelect.value = this.draftOverrides?.variant?.id ?? '';
 			variantSelect.addEventListener('change', () => {
-				const customRulesWerePreserved = hasExplicitDraftField(
+				const hadCustomRules = hasExplicitDraftField(
 					this.draftOverrides,
 					'rulesMarkdown',
 				);
+				const customRules = this.draftOverrides?.rulesMarkdown;
 				this.draftOverrides = selectDraftVariant(
 					this.draftOverrides,
 					variantSelect.value || undefined,
@@ -584,10 +613,21 @@ export class CardForgeView extends ItemView {
 				);
 				const defaultLabel = selected
 					? getVariantDisplayLabel(selected)
-					: 'source item';
-				this.variantRulesNotice = customRulesWerePreserved
-					? `Variant changed. Custom Rules were preserved. Use ${defaultLabel} rules to restore the current default.`
-					: undefined;
+					: 'Source item';
+				const selectedDefaultRules = selected?.item.description
+					?? source.description;
+				const customRulesWerePreserved = hadCustomRules
+					&& customRules !== selectedDefaultRules;
+				if (!customRulesWerePreserved) {
+					this.draftOverrides = resetDraftField(
+						this.draftOverrides,
+						'rulesMarkdown',
+					);
+				}
+				this.variantRulesNotice = createVariantPreservationNotice(
+					defaultLabel,
+					customRulesWerePreserved,
+				);
 				this.syncDraftTemporaryArtworkReferences();
 				this.scheduleEditorPreview();
 				this.renderEditor();
@@ -618,24 +658,46 @@ export class CardForgeView extends ItemView {
 		}), 'number');
 		this.appendTextEditor('Cost', effective.item.cost ?? '', (value) => this.updateStatDraft('cost', value || null));
 
-		const rulesRow = this.createEditorField('Rules markdown', true);
+		const rulesRow = this.createEditorField('Rules Markdown', true);
 		const rules = rulesRow.createEl('textarea', {
 			cls: 'ttrpg-card-forge__editor-rules',
 			attr: { rows: '10', placeholder: 'Rules markdown' },
 		});
 		rules.value = this.draftOverrides?.rulesMarkdown ?? effective.item.description;
-		rules.addEventListener('input', () => this.updateDraft((draft) => {
-			draft.rulesMarkdown = rules.value;
-		}));
-		if (this.variantRulesNotice) {
-			const notice = rulesRow.createDiv({
-				cls: 'ttrpg-card-forge__editor-inline-notice',
+		const currentRulesDefault = effective.variant?.item.description
+			?? source.description;
+		let variantNoticeElement: HTMLElement | undefined;
+		rules.addEventListener('input', () => {
+			const override = resolveRulesDraftOverride(
+				rules.value,
+				currentRulesDefault,
+			);
+			if (override === undefined) {
+				this.variantRulesNotice = undefined;
+				if (variantNoticeElement) {
+					variantNoticeElement.hidden = true;
+				}
+			}
+			this.updateDraft((draft) => {
+				if (override === undefined) {
+					delete draft.rulesMarkdown;
+				} else {
+					draft.rulesMarkdown = override;
+				}
 			});
-			notice.createSpan({ text: this.variantRulesNotice });
-			const useVariantRules = notice.createEl('button', {
-				text: effective.variant
-					? `Use ${getVariantDisplayLabel(effective.variant)} rules`
-					: 'Use source item rules',
+		});
+		if (this.variantRulesNotice) {
+			variantNoticeElement = rulesRow.createDiv({
+				cls: 'ttrpg-card-forge__variant-notice',
+				attr: { role: 'status' },
+			});
+			const noticeCopy = variantNoticeElement.createDiv({
+				cls: 'ttrpg-card-forge__variant-notice-copy',
+			});
+			noticeCopy.createEl('strong', { text: this.variantRulesNotice.title });
+			noticeCopy.createSpan({ text: this.variantRulesNotice.message });
+			const useVariantRules = variantNoticeElement.createEl('button', {
+				text: this.variantRulesNotice.actionLabel,
 				attr: { type: 'button' },
 			});
 			useVariantRules.addEventListener('click', () => {
@@ -684,7 +746,7 @@ export class CardForgeView extends ItemView {
 			cls: 'ttrpg-card-forge__editor-status',
 			attr: { role: 'status', 'aria-live': 'polite' },
 		});
-		this.setEditorStatus(this.getEditorStateLabel());
+		this.setEditorStatus('');
 		const actions = this.editorElement.createDiv({ cls: 'ttrpg-card-forge__editor-actions' });
 		for (const action of getCardEditorActions(
 			this.editingQueueEntryId ? 'queue-entry' : 'source-draft',
@@ -743,6 +805,7 @@ export class CardForgeView extends ItemView {
 	private appendArtworkEditor(effective: EffectiveCardInput): void {
 		const row = this.createEditorField('Artwork', true);
 		const select = row.createEl('select');
+		select.setAttribute('aria-label', 'Artwork source');
 		for (const [value, label] of [
 			['source', 'Use source artwork'],
 			['none', 'No artwork'],
@@ -758,87 +821,208 @@ export class CardForgeView extends ItemView {
 			: artworkOverride?.kind ?? 'source';
 		this.artworkEditorMode ??= effectiveArtworkMode;
 		select.value = this.artworkEditorMode;
-		const pathInput = row.createEl('input', { type: 'text', placeholder: 'Vault-relative artwork path' });
-		const artworkListId = 'ttrpg-card-forge-vault-artwork';
-		pathInput.setAttribute('list', artworkListId);
-		const artworkList = row.createEl('datalist', { attr: { id: artworkListId } });
-		for (const file of this.app.vault.getFiles()) {
-			if (isSupportedArtworkPath(file.path)) {
-				artworkList.createEl('option', { value: file.path });
-			}
-		}
-		pathInput.value = this.draftOverrides?.artwork?.kind === 'vault'
-			? this.draftOverrides.artwork.path
-			: effective.source.imagePath ?? '';
-		const fileInput = row.createEl('input', { type: 'file' });
-		fileInput.accept = 'image/avif,image/bmp,image/gif,image/jpeg,image/png,image/webp';
-		const webInput = row.createEl('input', { type: 'url', placeholder: 'https://example.com/art.png' });
-		const webButton = row.createEl('button', { text: 'Load image', attr: { type: 'button' } });
-		const persistLabel = row.createEl('label', {
-			cls: 'ttrpg-card-forge__artwork-persist',
-		});
-		const persistCheckbox = persistLabel.createEl('input', { type: 'checkbox' });
-		persistLabel.createSpan({ text: 'Save a copy to vault for future use' });
-		const temporary = artworkOverride?.kind === 'temporary'
-			? this.temporaryArtworkStore.get(artworkOverride.id)
-			: undefined;
-		const availability = row.createDiv({
-			cls: 'ttrpg-card-forge__editor-inline-notice',
-		});
-		if (artworkOverride?.kind === 'temporary' && !temporary) {
-			availability.setText('Temporary artwork unavailable after reload. Choose it again, use source artwork, or choose a vault image.');
-		} else if (temporary) {
-			availability.setText(`Session artwork loaded: ${temporary.name}`);
-		} else {
-			availability.hidden = true;
-		}
-		const updateVisibility = (): void => {
-			pathInput.hidden = select.value !== 'vault';
-			fileInput.hidden = select.value !== 'local';
-			webInput.hidden = select.value !== 'https';
-			webButton.hidden = select.value !== 'https';
-			persistLabel.hidden = select.value !== 'local' && select.value !== 'https';
-			availability.hidden = artworkOverride?.kind !== 'temporary'
-				|| (select.value !== 'local' && select.value !== 'https');
-		};
-		updateVisibility();
 		select.addEventListener('change', () => {
 			this.artworkLoadGeneration += 1;
 			this.artworkEditorMode = select.value as ArtworkEditorMode;
-			updateVisibility();
+			this.persistArtworkToVault = false;
 			if (select.value === 'source') {
 				this.updateDraft((draft) => { delete draft.artwork; });
 			} else if (select.value === 'none') {
 				this.updateDraft((draft) => { draft.artwork = { kind: 'none' }; });
 			} else if (select.value === 'vault') {
-				this.updateDraft((draft) => {
-					draft.artwork = pathInput.value.trim()
-						? { kind: 'vault', path: pathInput.value.trim() }
-						: { kind: 'none' };
+				const initialPath = this.artworkVaultPathDraft
+					?? (artworkOverride?.kind === 'vault'
+						? artworkOverride.path
+						: effective.source.imagePath ?? '');
+				const validation = validateVaultArtworkPath(
+					initialPath,
+					(path) => Boolean(
+						this.app.vault.getFileByPath(path)
+						&& isSupportedArtworkPath(path),
+					),
+				);
+				if (validation.valid) {
+					this.artworkVaultPathDraft = validation.path;
+					this.updateDraft((draft) => {
+						draft.artwork = { kind: 'vault', path: validation.path };
+					});
+				}
+			}
+			this.renderEditor();
+		});
+
+		const presentation = getArtworkEditorPresentation(this.artworkEditorMode);
+		if (presentation.showVaultPath) {
+			const pathInput = row.createEl('input', {
+				type: 'text',
+				placeholder: 'Vault-relative artwork path',
+				cls: 'ttrpg-card-forge__artwork-path-input',
+			});
+			pathInput.setAttribute('aria-label', 'Vault artwork path');
+			const artworkListId = `ttrpg-card-forge-vault-artwork-${this.temporaryArtworkOwner}`;
+			pathInput.setAttribute('list', artworkListId);
+			const artworkList = row.createEl('datalist', {
+				attr: { id: artworkListId },
+			});
+			for (const file of this.app.vault.getFiles()) {
+				if (isSupportedArtworkPath(file.path)) {
+					artworkList.createEl('option', { value: file.path });
+				}
+			}
+			this.artworkVaultPathDraft ??= artworkOverride?.kind === 'vault'
+				? artworkOverride.path
+				: effective.source.imagePath ?? '';
+			pathInput.value = this.artworkVaultPathDraft;
+			const validationElement = row.createDiv({
+				cls: 'ttrpg-card-forge__artwork-validation',
+				attr: { role: 'status', 'aria-live': 'polite' },
+			});
+			validationElement.hidden = true;
+			pathInput.addEventListener('input', () => {
+				this.artworkVaultPathDraft = pathInput.value;
+				const validation = validateVaultArtworkPath(
+					pathInput.value,
+					(path) => Boolean(
+						this.app.vault.getFileByPath(path)
+						&& isSupportedArtworkPath(path),
+					),
+				);
+				validationElement.setText(validation.message ?? '');
+				validationElement.hidden = validation.valid;
+				pathInput.toggleClass('is-invalid', !validation.valid);
+				pathInput.setAttribute('aria-invalid', validation.valid ? 'false' : 'true');
+				if (validation.valid) {
+					this.updateDraft((draft) => {
+						draft.artwork = { kind: 'vault', path: validation.path };
+					});
+				}
+			});
+			return;
+		}
+
+		let fileInput: HTMLInputElement | undefined;
+		let webInput: HTMLInputElement | undefined;
+		if (presentation.showLocalFile) {
+			fileInput = row.createEl('input', {
+				type: 'file',
+				cls: 'ttrpg-card-forge__artwork-file-input',
+			});
+			fileInput.setAttribute('aria-label', 'Choose temporary local artwork');
+			fileInput.accept = 'image/avif,image/bmp,image/gif,image/jpeg,image/png,image/webp';
+		}
+		if (presentation.showHttpsUrl) {
+			const urlRow = row.createDiv({
+				cls: 'ttrpg-card-forge__artwork-control-row',
+			});
+			webInput = urlRow.createEl('input', {
+				type: 'url',
+				placeholder: 'https://example.com/art.png',
+				cls: 'ttrpg-card-forge__artwork-url-input',
+			});
+			webInput.setAttribute('aria-label', 'Temporary artwork web address');
+			webInput.value = this.artworkHttpsUrl;
+			const useButton = urlRow.createEl('button', {
+				text: 'Use image',
+				cls: 'ttrpg-card-forge__artwork-use-button',
+				attr: { type: 'button' },
+			});
+			const useImage = (): void => {
+				this.artworkHttpsUrl = webInput?.value.trim() ?? '';
+				void this.loadEditorArtwork(
+					() => this.artworkImporter.loadWebUrl(this.artworkHttpsUrl),
+					this.persistArtworkToVault,
+					'https',
+				);
+			};
+			webInput.addEventListener('input', () => {
+				this.artworkHttpsUrl = webInput?.value ?? '';
+			});
+			webInput.addEventListener('keydown', (event) => {
+				if (isArtworkUseKey(event.key)) {
+					event.preventDefault();
+					useImage();
+				}
+			});
+			useButton.addEventListener('click', useImage);
+		}
+
+		if (presentation.showPersistenceChoice) {
+			const persistence = row.createDiv({
+				cls: 'ttrpg-card-forge__artwork-persistence',
+			});
+			const persistLabel = persistence.createEl('label', {
+				cls: 'ttrpg-card-forge__artwork-persist',
+			});
+			const persistCheckbox = persistLabel.createEl('input', {
+				type: 'checkbox',
+			});
+			persistCheckbox.checked = this.persistArtworkToVault;
+			persistLabel.createSpan({ text: 'Save to vault' });
+			persistence.createDiv({
+				cls: 'ttrpg-card-forge__artwork-helper',
+				text: 'Keeps this artwork after Obsidian restarts.',
+			});
+			persistCheckbox.addEventListener('change', () => {
+				this.persistArtworkToVault = persistCheckbox.checked;
+			});
+		}
+
+		const temporary = artworkOverride?.kind === 'temporary'
+			? this.temporaryArtworkStore.get(artworkOverride.id)
+			: undefined;
+		if (temporary) {
+			row.createDiv({
+				cls: 'ttrpg-card-forge__artwork-status',
+				text: createTemporaryArtworkStatus(temporary.name),
+			});
+		}
+		const warning = createMissingArtworkWarning(
+			artworkOverride?.kind === 'temporary' && !temporary,
+			effective.source.hasImage,
+		);
+		if (warning) {
+			const panel = row.createDiv({
+				cls: 'ttrpg-card-forge__artwork-warning',
+				attr: { role: 'alert' },
+			});
+			panel.createEl('strong', { text: warning.title });
+			panel.createDiv({ text: warning.message });
+			const actions = panel.createDiv({
+				cls: 'ttrpg-card-forge__artwork-warning-actions',
+			});
+			const chooseAgain = actions.createEl('button', {
+				text: 'Choose again',
+				attr: { type: 'button' },
+			});
+			chooseAgain.addEventListener('click', () => {
+				if (fileInput) {
+					fileInput.click();
+				} else {
+					webInput?.focus();
+				}
+			});
+			if (warning.showUseSourceArtwork) {
+				const useSource = actions.createEl('button', {
+					text: 'Use source artwork',
+					attr: { type: 'button' },
+				});
+				useSource.addEventListener('click', () => {
+					this.artworkEditorMode = 'source';
+					this.updateDraft((draft) => { delete draft.artwork; });
+					this.renderEditor();
 				});
 			}
-		});
-		pathInput.addEventListener('input', () => this.updateDraft((draft) => {
-			draft.artwork = pathInput.value.trim()
-				? { kind: 'vault', path: pathInput.value.trim() }
-				: { kind: 'none' };
-		}));
-		fileInput.addEventListener('change', () => {
-			const file = fileInput.files?.[0];
+		}
+
+		fileInput?.addEventListener('change', () => {
+			const file = fileInput?.files?.[0];
 			if (file) {
 				void this.loadEditorArtwork(
 					() => this.artworkImporter.loadLocalFile(file),
-					persistCheckbox.checked,
+					this.persistArtworkToVault,
 					'local',
 				);
 			}
-		});
-		webButton.addEventListener('click', () => {
-			void this.loadEditorArtwork(
-				() => this.artworkImporter.loadWebUrl(webInput.value),
-				persistCheckbox.checked,
-				'https',
-			);
 		});
 	}
 
@@ -872,6 +1056,10 @@ export class CardForgeView extends ItemView {
 			this.artworkEditorMode = selected.override.kind === 'temporary'
 				? selected.override.origin ?? origin
 				: selected.override.kind;
+			if (selected.vaultPath) {
+				this.artworkVaultPathDraft = selected.vaultPath;
+			}
+			this.persistArtworkToVault = false;
 			new Notice(selected.vaultPath
 				? `Saved artwork to ${selected.vaultPath}.`
 				: 'Loaded temporary artwork for this Obsidian session.');
@@ -928,7 +1116,11 @@ export class CardForgeView extends ItemView {
 		}
 		this.appliedOverrides = structuredClone(this.draftOverrides);
 		this.printQueue.updateOverrides(this.editingQueueEntryId, this.appliedOverrides);
-		this.setEditorStatus(this.getEditorStateLabel());
+		this.setEditorStatus('');
+		const source = this.findSelectedItem();
+		this.renderPreviewIndicator(
+			source ? this.createEffectiveCardInput(source) : undefined,
+		);
 	}
 
 	private discardEditorChanges(): void {
@@ -937,6 +1129,9 @@ export class CardForgeView extends ItemView {
 		this.draftOverrides = structuredClone(this.appliedOverrides);
 		this.variantRulesNotice = undefined;
 		this.artworkEditorMode = undefined;
+		this.artworkVaultPathDraft = undefined;
+		this.artworkHttpsUrl = '';
+		this.persistArtworkToVault = false;
 		this.syncDraftTemporaryArtworkReferences();
 		this.renderEditor();
 		this.renderPreview(true);
@@ -948,6 +1143,9 @@ export class CardForgeView extends ItemView {
 		this.draftOverrides = undefined;
 		this.variantRulesNotice = undefined;
 		this.artworkEditorMode = undefined;
+		this.artworkVaultPathDraft = undefined;
+		this.artworkHttpsUrl = '';
+		this.persistArtworkToVault = false;
 		this.syncDraftTemporaryArtworkReferences();
 		this.renderEditor();
 		this.renderPreview(true);
@@ -955,14 +1153,6 @@ export class CardForgeView extends ItemView {
 
 	private setEditorStatus(message: string): void {
 		this.editorStatusElement?.setText(message);
-	}
-
-	private getEditorStateLabel(): string {
-		if (this.editingQueueEntryId
-			&& !areCardOverridesEqual(this.draftOverrides, this.appliedOverrides)) {
-			return 'Unsaved changes';
-		}
-		return this.draftOverrides ? 'Edited for print' : 'Source card';
 	}
 
 	private syncDraftTemporaryArtworkReferences(): void {
@@ -1004,20 +1194,7 @@ export class CardForgeView extends ItemView {
 		this.previewRequestGate.invalidate();
 		const source = this.findSelectedItem();
 		const effective = source ? this.createEffectiveCardInput(source) : undefined;
-		if (this.previewIndicatorElement) {
-			this.previewIndicatorElement.setText(effective
-				? [effective.variant
-					? `Variant: ${getVariantDisplayLabel(effective.variant)}`
-					: undefined,
-					effective.overrides ? 'Edited for print' : undefined,
-					effective.overrides?.artwork?.kind === 'temporary'
-						&& !this.temporaryArtworkStore.get(effective.overrides.artwork.id)
-						? 'Temporary artwork unavailable'
-						: undefined]
-					.filter(Boolean)
-					.join(' · ')
-				: '');
-		}
+		this.renderPreviewIndicator(effective);
 		if (!preserveExisting) {
 			this.cardHostElement.empty();
 			this.diagnosticsElement.empty();
@@ -1136,8 +1313,40 @@ export class CardForgeView extends ItemView {
 			this.currentPageIndex,
 			Math.max(0, plan.pages.length - 1),
 		);
-		this.setEditorStatus(this.getEditorStateLabel());
+		this.setEditorStatus('');
 		this.renderCurrentPage();
+	}
+
+	private renderPreviewIndicator(effective: EffectiveCardInput | undefined): void {
+		if (!this.previewIndicatorElement) {
+			return;
+		}
+		this.previewIndicatorElement.empty();
+		if (!effective) {
+			return;
+		}
+		const artworkMissing = effective.overrides?.artwork?.kind === 'temporary'
+			&& !this.temporaryArtworkStore.get(effective.overrides.artwork.id);
+		const chips = createPreviewStatusChips({
+			...(effective.variant
+				? { variantLabel: getVariantDisplayLabel(effective.variant) }
+				: {}),
+			edited: Boolean(effective.overrides),
+			unsaved: Boolean(
+				this.editingQueueEntryId
+				&& !areCardOverridesEqual(
+					this.draftOverrides,
+					this.appliedOverrides,
+				),
+			),
+			artworkMissing,
+		});
+		for (const chip of chips) {
+			this.previewIndicatorElement.createSpan({
+				cls: `ttrpg-card-forge__status-chip is-${chip.tone}`,
+				text: chip.label,
+			});
+		}
 	}
 
 	private beginPhysicalPlanLookup(input: EffectiveCardInput): PhysicalPlanLookup {
@@ -1530,7 +1739,7 @@ export class CardForgeView extends ItemView {
 			return;
 		}
 		const row = this.queueListElement.createDiv({
-			cls: `ttrpg-card-forge__queue-entry${resolved.unavailable ? ' is-unavailable' : ''}`,
+			cls: `ttrpg-card-forge__queue-entry${resolved.unavailable ? ' is-unavailable' : ''}${resolved.temporaryArtworkUnavailable ? ' has-warning' : ''}`,
 		});
 		const details = row.createDiv({ cls: 'ttrpg-card-forge__queue-entry-details' });
 		details.createDiv({
@@ -1543,11 +1752,49 @@ export class CardForgeView extends ItemView {
 		const metadata = resolved.unavailable
 			? 'Unavailable — remove this entry to export'
 			: resolved.temporaryArtworkUnavailable
-				? 'Temporary artwork unavailable after reload — choose artwork again to export'
+				? 'Export blocked until artwork is replaced'
 			: resolved.unfitPageIndexes.size > 0
 				? 'Content does not fit a physical card — export blocked'
 				: `${resolved.pages.length} ${resolved.pages.length === 1 ? 'card' : 'cards'} per copy · ${resolved.pages.length * resolved.entry.quantity} total`;
 		details.createDiv({ cls: 'ttrpg-card-forge__queue-entry-meta', text: metadata });
+		const source = this.itemIndex.getItems().find(
+			(item) => item.filePath === resolved.entry.filePath,
+		);
+		const artworkWarning = createMissingArtworkWarning(
+			Boolean(resolved.temporaryArtworkUnavailable),
+			Boolean(source?.hasImage),
+		);
+		if (artworkWarning) {
+			const panel = details.createDiv({
+				cls: 'ttrpg-card-forge__queue-artwork-warning',
+				attr: { role: 'alert' },
+			});
+			panel.createEl('strong', { text: artworkWarning.title });
+			panel.createDiv({ text: artworkWarning.message });
+			const recoveryActions = panel.createDiv({
+				cls: 'ttrpg-card-forge__artwork-warning-actions',
+			});
+			const origin = resolved.entry.overrides?.artwork?.kind === 'temporary'
+				? resolved.entry.overrides.artwork.origin ?? 'local'
+				: 'local';
+			appendQueueButton(
+				recoveryActions,
+				'Choose again',
+				`Choose artwork again for ${resolved.item?.name ?? 'item'}`,
+				() => this.editQueueEntry(resolved.entry.id, origin),
+			);
+			if (artworkWarning.showUseSourceArtwork) {
+				appendQueueButton(
+					recoveryActions,
+					'Use source artwork',
+					`Use source artwork for ${resolved.item?.name ?? 'item'}`,
+					() => this.printQueue.updateOverrides(
+						resolved.entry.id,
+						resetDraftField(resolved.entry.overrides, 'artwork'),
+					),
+				);
+			}
+		}
 
 		const controls = row.createDiv({ cls: 'ttrpg-card-forge__queue-controls' });
 		appendQueueButton(controls, '−', `Decrease ${resolved.item?.name ?? 'item'} quantity`, () => this.printQueue.decrement(resolved.entry.id), resolved.entry.quantity <= 1);
@@ -1681,7 +1928,10 @@ export class CardForgeView extends ItemView {
 		}
 	}
 
-	private editQueueEntry(entryId: string): void {
+	private editQueueEntry(
+		entryId: string,
+		artworkMode?: Extract<ArtworkEditorMode, 'local' | 'https'>,
+	): void {
 		const entry = this.printQueue.getEntries().find((candidate) => candidate.id === entryId);
 		if (!entry) {
 			return;
@@ -1694,13 +1944,25 @@ export class CardForgeView extends ItemView {
 		this.appliedOverrides = structuredClone(entry.overrides);
 		this.draftOverrides = structuredClone(entry.overrides);
 		this.variantRulesNotice = undefined;
-		this.artworkEditorMode = undefined;
+		this.artworkEditorMode = artworkMode;
+		this.artworkVaultPathDraft = undefined;
+		this.artworkHttpsUrl = '';
+		this.persistArtworkToVault = false;
 		this.syncDraftTemporaryArtworkReferences();
 		this.isEditMode = true;
 		this.currentPageIndex = 0;
 		this.renderBrowser();
 		this.renderEditor();
 		this.renderPreview();
+		if (artworkMode === 'local') {
+			this.editorElement
+				?.querySelector<HTMLInputElement>('.ttrpg-card-forge__artwork-file-input')
+				?.click();
+		} else if (artworkMode === 'https') {
+			this.editorElement
+				?.querySelector<HTMLInputElement>('.ttrpg-card-forge__artwork-url-input')
+				?.focus();
+		}
 	}
 
 	private findSelectedItem(): ItemCardData | undefined {
