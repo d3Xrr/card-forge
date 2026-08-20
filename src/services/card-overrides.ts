@@ -45,8 +45,7 @@ export function applyCardOverrides(
 		...(segments.length > 1 ? { manualRuleSegments: segments } : {}),
 		...(overrides?.sourceText !== undefined
 			? {
-				sourceText: overrides.sourceText ?? undefined,
-				...(overrides.sourceText === null ? { source: undefined } : {}),
+				sourceDisplayOverride: overrides.sourceText ?? '',
 			}
 			: {}),
 		...(stats?.damage !== undefined ? { damage: stats.damage ?? undefined } : {}),
@@ -62,6 +61,8 @@ export function applyCardOverrides(
 		...(stats?.weight !== undefined ? { weight: stats.weight ?? undefined } : {}),
 		...(artwork?.kind === 'vault'
 			? { imagePath: artwork.path, hasImage: true }
+			: artwork?.kind === 'temporary'
+				? { imagePath: `temporary:${artwork.id}`, hasImage: true }
 			: artwork?.kind === 'none'
 				? { imagePath: undefined, hasImage: false }
 				: {}),
@@ -130,7 +131,12 @@ export function createCardOverridesFingerprint(value: unknown): string {
 		} : null,
 		artwork: overrides.artwork?.kind === 'vault'
 			? { kind: 'vault', path: overrides.artwork.path }
-			: overrides.artwork?.kind === 'none' ? { kind: 'none' } : null,
+			: overrides.artwork?.kind === 'temporary'
+				? {
+					kind: 'temporary',
+					id: overrides.artwork.id,
+				}
+				: overrides.artwork?.kind === 'none' ? { kind: 'none' } : null,
 		sourceText: encodeOptional(overrides, 'sourceText'),
 		variant: overrides.variant?.id ?? null,
 	});
@@ -189,6 +195,22 @@ function normalizeArtwork(value: unknown): CardArtworkOverride | undefined {
 	if (value.kind === 'vault' && typeof value.path === 'string') {
 		const path = value.path.trim().replaceAll('\\', '/');
 		return path ? { kind: 'vault', path } : undefined;
+	}
+	if (value.kind === 'temporary' && typeof value.id === 'string') {
+		const id = value.id.trim();
+		if (!id) {
+			return undefined;
+		}
+		const name = typeof value.name === 'string' ? value.name.trim() : '';
+		const origin = value.origin === 'local' || value.origin === 'https'
+			? value.origin
+			: undefined;
+		return {
+			kind: 'temporary',
+			id,
+			...(name ? { name } : {}),
+			...(origin ? { origin } : {}),
+		};
 	}
 	return undefined;
 }

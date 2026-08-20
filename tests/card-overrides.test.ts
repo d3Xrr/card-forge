@@ -51,9 +51,24 @@ void test('title, rules, source, and vault artwork overrides resolve independent
 	});
 	assert.equal(result.item.name, 'Print title');
 	assert.equal(result.item.description, 'Print-only rules.');
-	assert.equal(result.item.sourceText, 'Home table reference');
+	assert.equal(result.item.sourceDisplayOverride, 'Home table reference');
 	assert.equal(result.item.imagePath, 'Card Forge Assets/custom.webp');
 	assert.equal(result.item.hasImage, true);
+});
+
+void test('explicit source display overrides do not replace canonical source metadata', () => {
+	const dmgSource = {
+		...source,
+		source: 'xdmg',
+		sourceText: "Dungeon Master's Guide (2024), p. 230",
+	};
+	const edited = applyCardOverrides(dmgSource, { sourceText: 'Test' }).item;
+	assert.equal(edited.source, 'xdmg');
+	assert.equal(edited.sourceText, "Dungeon Master's Guide (2024), p. 230");
+	assert.equal(edited.sourceDisplayOverride, 'Test');
+	const blank = applyCardOverrides(dmgSource, { sourceText: null }).item;
+	assert.equal(blank.sourceDisplayOverride, '');
+	assert.equal(applyCardOverrides(dmgSource, undefined).item.sourceDisplayOverride, undefined);
 });
 
 void test('manual card break delimiter is removed from rendered rules', () => {

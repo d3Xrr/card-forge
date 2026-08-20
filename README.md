@@ -16,7 +16,7 @@ Phase 4B adds non-destructive, print-only live editing on top of the determinist
 - Provides responsive **Preview** and **Edit** modes with debounced canonical replanning while the last completed preview stays visible.
 - Supports print-only overrides for title, type, rarity, attunement, rules Markdown, structured statistics, artwork, source text, and same-note variants.
 - Recognizes `///CARD BREAK///` on its own line as an explicit new physical-card boundary; the delimiter is never rendered.
-- Imports local files or explicitly requested HTTPS artwork into the managed vault folder `Card Forge Assets`, while also supporting source art, no art, and existing vault-relative art.
+- Uses local files or explicitly requested HTTPS artwork as session-only ObjectURLs by default, while also supporting source art, no art, and existing vault-relative art. **Save a copy to vault** opts into a collision-safe file under `Card Forge Assets`.
 - Adds selected items to a persistent print queue only when the user requests it.
 - Persists each queue entry's overrides and exposes them again through its **Edit** action after reload.
 - Supports quantity changes, removal, clearing, and accessible move-up/move-down ordering.
@@ -32,9 +32,9 @@ Phase 4B adds non-destructive, print-only live editing on top of the determinist
 
 1. Open **TTRPG Card Forge** from the ribbon or command palette.
 2. Select an item and inspect its canonical physical-card pages.
-3. Optionally switch to **Edit**, make print-only changes, and use **Apply**, **Discard**, or **Reset to source**. Reset removes the override; it never edits the source note.
-4. Choose **Add to print queue**. Adding the same source with equivalent overrides increments its quantity; a different override state creates a distinct entry.
-5. Use **Edit**, `+`, `−`, move-up, move-down, and remove controls to prepare the queue.
+3. Optionally switch to **Edit** and make a live print draft. Use **Reset edits** or **Add to print queue**; there is no separate Apply step for a new draft.
+4. Adding the same source with equivalent overrides increments its quantity; a different override state creates a distinct entry.
+5. Use **Edit**, `+`, `−`, move-up, move-down, and remove controls to prepare the queue. Existing queue edits use **Save changes**, **Discard changes**, and **Reset to source**; reset remains a working draft until saved.
 6. Inspect the physical-card count and A4 sheet preview.
 7. Choose **Export PDF**.
 8. Open the generated PDF with **Open last PDF**.
@@ -82,7 +82,7 @@ npm run lint
 npm run build
 ```
 
-The PDF pipeline uses the browser-compatible `html-to-image` and `pdf-lib` packages bundled into `main.js`. It does not use a CDN, remote service, system print dialog, private Electron API, or network request at export time. An HTTPS request occurs only when the user explicitly chooses **Import web artwork**; the returned bytes are stored locally before rendering.
+The PDF pipeline uses the browser-compatible `html-to-image` and `pdf-lib` packages bundled into `main.js`. It does not use a CDN, remote service, system print dialog, private Electron API, or network request at export time. An HTTPS request occurs only when the user explicitly chooses **Temporary HTTPS URL**; the image is downloaded once into a runtime ObjectURL before rendering. It is written to the vault only when **Save a copy to vault for future use** is checked.
 
 ## Local development deploy
 
@@ -98,7 +98,7 @@ Deployment copies only `main.js`, `manifest.json`, and `styles.css` into:
 <vaultPath>/.obsidian/plugins/ttrpg-card-forge/
 ```
 
-Generated PDFs and explicitly imported artwork are written through Obsidian's Vault API. Artwork is stored in `Card Forge Assets`, never in the configured item-source folder. Source files under the configured item folder remain read-only.
+Generated PDFs and explicitly persisted artwork are written through Obsidian's Vault API. Persistent artwork is stored in `Card Forge Assets`, never in the configured item-source folder. Temporary artwork stays in memory for the current plugin session. Source files under the configured item folder remain read-only.
 
 ## Manual or BRAT installation
 
@@ -108,7 +108,7 @@ Release tags must exactly match `manifest.json` without a `v` prefix. The GitHub
 
 ## Data and privacy
 
-TTRPG Card Forge is local-first. It does not include D&D rules text or artwork, call game-data APIs, upload vault content, add telemetry, or download game data. Source Markdown and source artwork are read-only. Print overrides live in plugin data. Vault writes are limited to PDFs explicitly requested by the user and artwork explicitly imported by the user into the managed asset folder. Web artwork is fetched only from a user-supplied HTTPS URL, imported once, and then rendered locally without a continuing remote dependency.
+TTRPG Card Forge is local-first. It does not include D&D rules text or artwork, call game-data APIs, upload vault content, add telemetry, or download game data. Source Markdown and source artwork are read-only. Print overrides live in plugin data. Temporary image bytes are never stored as Base64 in plugin data, and their ObjectURLs are revoked when no draft or queue entry uses them. Vault writes are limited to PDFs explicitly requested by the user and artwork the user explicitly chooses to persist. Web artwork is fetched only from a user-supplied HTTPS URL, downloaded once, and then rendered locally without a continuing remote dependency.
 
 ## Project layout
 

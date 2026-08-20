@@ -103,7 +103,7 @@ interface PageMeasurementCache {
 
 const ARTWORK_SHARE_CANDIDATES = [undefined, 20, 16] as const;
 const MAXIMUM_ARTWORK_PAGE_PENALTY = 1;
-export const ITEM_CARD_MEASUREMENT_RENDER_REVISION = 'item-card-renderer-css-v2';
+export const ITEM_CARD_MEASUREMENT_RENDER_REVISION = 'item-card-renderer-css-v3';
 
 export class ItemCardFitService {
 	constructor(
@@ -528,6 +528,7 @@ export function createItemCardPageMeasurementKey(
 			name: page.item.name,
 			detail: page.item.detail ?? null,
 			sourceText: page.item.sourceText ?? null,
+			sourceDisplayOverride: page.item.sourceDisplayOverride ?? null,
 			rarity: page.item.rarity ?? null,
 			attunement: page.item.attunement ?? null,
 			source: page.item.source ?? null,

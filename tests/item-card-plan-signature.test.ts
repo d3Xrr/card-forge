@@ -57,6 +57,9 @@ void test('distinguishes output-relevant page, item, and semantic content change
 		mutatePlan(baseline, (pages) => { pages[0]!.item.detail = 'Different identity'; }),
 		mutatePlan(baseline, (pages) => { pages[0]!.item.damage = '2d6 force'; }),
 		mutatePlan(baseline, (pages) => {
+			pages[0]!.item.sourceDisplayOverride = 'Literal source';
+		}),
+		mutatePlan(baseline, (pages) => {
 			pages[0]!.blocks[0] = { type: 'paragraph', markdown: 'Different rule.' };
 		}),
 	];

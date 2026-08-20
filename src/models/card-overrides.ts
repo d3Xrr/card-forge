@@ -12,7 +12,13 @@ export interface CardStatOverrides {
 
 export type CardArtworkOverride =
 	| { kind: 'none' }
-	| { kind: 'vault'; path: string };
+	| { kind: 'vault'; path: string }
+	| {
+		kind: 'temporary';
+		id: string;
+		name?: string;
+		origin?: 'local' | 'https';
+	};
 
 export interface CardVariantOverride {
 	id: string;

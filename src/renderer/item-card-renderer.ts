@@ -16,7 +16,7 @@ import {
 	PRINT_TYPOGRAPHY,
 } from './print-typography';
 import { renderSafeMarkdownBlocks } from './safe-markdown-renderer';
-import { formatSourceDisplay } from './source-formatter';
+import { resolveSourceDisplay } from './source-formatter';
 import { renderItemStats } from './structured-item-stats';
 
 export type ArtworkLoadResult =
@@ -153,7 +153,11 @@ export class ItemCardRenderer {
 		}
 
 		const sourceDisplay = page.showSource
-			? formatSourceDisplay(item.source, item.sourceText)
+			? resolveSourceDisplay(
+				item.source,
+				item.sourceText,
+				item.sourceDisplayOverride,
+			)
 			: undefined;
 		if (sourceDisplay) {
 			const footer = appendElement(card, 'footer', 'ttrpg-card-forge-card__footer');

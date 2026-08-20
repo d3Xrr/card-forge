@@ -20,8 +20,13 @@ import {
 	PhysicalPlanCache,
 } from './services/physical-plan-cache';
 import { isSupportedArtworkPath } from './services/artwork-resolver';
+import {
+	collectTemporaryArtworkIds,
+	TemporaryArtworkStore,
+} from './services/temporary-artwork-store';
 
 const INDEX_REBUILD_DELAY_MS = 350;
+const QUEUE_ARTWORK_OWNER = 'print-queue';
 
 export default class TTRPGCardForgePlugin extends Plugin {
 	settings: CardForgeSettings = DEFAULT_SETTINGS;
@@ -29,6 +34,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 	printQueue!: PrintQueueService;
 	readonly planningPerformance = new PlanningPerformanceMonitor();
 	readonly physicalPlanCache = new PhysicalPlanCache<FittedItemCardPlan>();
+	readonly temporaryArtworkStore = new TemporaryArtworkStore();
 	private indexedInputFingerprints = new Map<string, string>();
 	private rebuildTimer: number | null = null;
 	private unsubscribeFromIndex: (() => void) | null = null;
@@ -40,11 +46,13 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		const savedQueue = await this.loadPluginData();
 		this.itemIndex = new ItemIndex(this.app);
 		this.printQueue = new PrintQueueService(savedQueue);
+		this.syncQueueTemporaryArtworkReferences();
 		this.removePerformanceDebugApi = this.planningPerformance.installDebugApi(window);
 		this.unsubscribeFromIndex = this.itemIndex.subscribe((items) => {
 			this.reconcilePhysicalPlanCache(items);
 		});
 		this.unsubscribeFromQueue = this.printQueue.subscribe(() => {
+			this.syncQueueTemporaryArtworkReferences();
 			void this.persistPluginData().catch((error: unknown) => {
 				console.error('TTRPG Card Forge: could not persist print queue', error);
 			});
@@ -59,6 +67,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 				() => this.settings,
 				this.physicalPlanCache,
 				this.planningPerformance,
+				this.temporaryArtworkStore,
 			),
 		);
 
@@ -135,6 +144,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		this.removePerformanceDebugApi?.();
 		this.removePerformanceDebugApi = null;
 		this.physicalPlanCache.clear();
+		this.temporaryArtworkStore.clear();
 		this.indexedInputFingerprints.clear();
 		if (this.rebuildTimer !== null) {
 			window.clearTimeout(this.rebuildTimer);
@@ -275,5 +285,14 @@ export default class TTRPGCardForgePlugin extends Plugin {
 			printQueue: this.printQueue.serialize(),
 		}));
 		return this.saveChain;
+	}
+
+	private syncQueueTemporaryArtworkReferences(): void {
+		this.temporaryArtworkStore.setOwnerReferences(
+			QUEUE_ARTWORK_OWNER,
+			collectTemporaryArtworkIds(
+				this.printQueue.getEntries().map((entry) => entry.overrides),
+			),
+		);
 	}
 }

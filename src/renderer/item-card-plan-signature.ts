@@ -73,6 +73,7 @@ export interface ItemCardPlanItemSignature {
 	detail: HashedPlanText | null;
 	imagePath: HashedPlanText | null;
 	sourceText: HashedPlanText | null;
+	sourceDisplayOverride?: HashedPlanText;
 	hasImage: boolean;
 	rarity: HashedPlanText | null;
 	attunement: boolean | null;
@@ -188,6 +189,9 @@ function createItemSignature(item: ItemCardData): ItemCardPlanItemSignature {
 		detail: hashOptionalPlanText(item.detail),
 		imagePath: hashOptionalPlanText(item.imagePath),
 		sourceText: hashOptionalPlanText(item.sourceText),
+		...(item.sourceDisplayOverride !== undefined
+			? { sourceDisplayOverride: hashPlanText(item.sourceDisplayOverride) }
+			: {}),
 		hasImage: item.hasImage,
 		rarity: hashOptionalPlanText(item.rarity),
 		attunement: item.attunement ?? null,

@@ -216,6 +216,7 @@ void test('measurement keys reuse identical pages but distinguish render inputs'
 		{ name: 'Renamed Item' },
 		{ detail: 'Weapon, legendary' },
 		{ sourceText: 'A different source line' },
+		{ sourceDisplayOverride: 'Literal source footer' },
 		{ rarity: 'legendary' },
 		{ attunement: true },
 		{ source: 'phb' },

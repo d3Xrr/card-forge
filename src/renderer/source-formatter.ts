@@ -34,6 +34,17 @@ export function formatSourceDisplay(
 		: title;
 }
 
+/** Explicit print text is literal; absence falls back to canonical formatting. */
+export function resolveSourceDisplay(
+	source: string | undefined,
+	sourceText: string | undefined,
+	explicitOverride: string | undefined,
+): string | undefined {
+	return explicitOverride !== undefined
+		? explicitOverride
+		: formatSourceDisplay(source, sourceText);
+}
+
 function parseSourceText(sourceText: string): { title?: string; page?: string } {
 	const normalized = sourceText.replace(/\s+/gu, ' ').trim();
 	const pageMatch = /\b(pp?)\.\s*(\d+(?:\s*[-–—]\s*\d+)?)\b/iu.exec(normalized);

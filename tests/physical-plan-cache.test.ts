@@ -33,6 +33,7 @@ void test('builds a canonical key from every physical planning input slot', () =
 		'detail',
 		'imagePath',
 		'sourceText',
+		'sourceDisplayOverride',
 		'hasImage',
 		'rarity',
 		'attunement',
@@ -60,6 +61,7 @@ void test('builds a canonical key from every physical planning input slot', () =
 		{ ...input, sourceFingerprint: 'source-2' },
 		{ ...input, item: { ...input.item, mastery: 'graze' } },
 		{ ...input, item: { ...input.item, typeText: 'Edited weapon' } },
+		{ ...input, item: { ...input.item, sourceDisplayOverride: 'Literal' } },
 		{ ...input, item: { ...input.item, manualRuleSegments: ['A', 'B'] } },
 		{
 			...input,

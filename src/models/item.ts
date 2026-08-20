@@ -5,6 +5,8 @@ export interface ItemCardData {
 	detail?: string;
 	imagePath?: string;
 	sourceText?: string;
+	/** Literal print-only footer text. When present, bypass source canonicalization. */
+	sourceDisplayOverride?: string;
 	hasImage: boolean;
 	rarity?: string;
 	attunement?: boolean;

@@ -10,6 +10,7 @@ export interface PhysicalItemPlan {
 	cacheKey?: string;
 	artworkResourcePath?: string;
 	artworkRevisionFingerprint?: string;
+	temporaryArtworkUnavailable?: boolean;
 }
 
 export interface ResolvedPrintQueueEntry {
@@ -21,6 +22,7 @@ export interface ResolvedPrintQueueEntry {
 	cacheKey?: string;
 	artworkResourcePath?: string;
 	artworkRevisionFingerprint?: string;
+	temporaryArtworkUnavailable?: boolean;
 }
 
 export interface PhysicalQueueCard {
@@ -64,6 +66,9 @@ export function resolvePrintQueue(
 				: {}),
 			...(item && plan?.artworkRevisionFingerprint
 				? { artworkRevisionFingerprint: plan.artworkRevisionFingerprint }
+				: {}),
+			...(item && plan?.temporaryArtworkUnavailable
+				? { temporaryArtworkUnavailable: true }
 				: {}),
 		};
 	});
@@ -123,6 +128,8 @@ export function getInvalidQueueEntries(
 	entries: readonly ResolvedPrintQueueEntry[],
 ): ResolvedPrintQueueEntry[] {
 	return entries.filter(
-		(entry) => entry.unavailable || entry.unfitPageIndexes.size > 0,
+		(entry) => entry.unavailable
+			|| entry.temporaryArtworkUnavailable
+			|| entry.unfitPageIndexes.size > 0,
 	);
 }

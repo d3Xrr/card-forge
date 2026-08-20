@@ -1,7 +1,7 @@
 import { requestUrl, type App } from 'obsidian';
 
 import {
-	storeImportedArtwork,
+	type ArtworkImportPayload,
 	validateHttpsArtworkUrl,
 } from './artwork-importer-core';
 import { isSupportedArtworkPath } from './artwork-resolver';
@@ -18,17 +18,18 @@ const CONTENT_TYPE_EXTENSIONS: Readonly<Record<string, string>> = {
 export class ArtworkImporter {
 	constructor(private readonly app: App) {}
 
-	async importLocalFile(file: File): Promise<string> {
+	async loadLocalFile(file: File): Promise<ArtworkImportPayload> {
 		if (!isSupportedArtworkPath(file.name)) {
 			throw new Error('Choose an AVIF, BMP, GIF, JPEG, PNG, or WebP image.');
 		}
-		return storeImportedArtwork(this.app.vault, {
+		return {
 			data: await file.arrayBuffer(),
 			fileName: file.name,
-		});
+			...(file.type ? { mimeType: file.type } : {}),
+		};
 	}
 
-	async importWebUrl(value: string): Promise<string> {
+	async loadWebUrl(value: string): Promise<ArtworkImportPayload> {
 		const url = validateHttpsArtworkUrl(value.trim());
 		const response = await requestUrl({ url: url.href, method: 'GET' });
 		const contentTypeHeader = Object.entries(response.headers).find(
@@ -46,9 +47,10 @@ export class ArtworkImporter {
 		if (!fileName) {
 			throw new Error('The URL did not return a supported image format.');
 		}
-		return storeImportedArtwork(this.app.vault, {
+		return {
 			data: response.arrayBuffer,
 			fileName,
-		});
+			...(contentType ? { mimeType: contentType } : {}),
+		};
 	}
 }

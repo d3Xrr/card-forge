@@ -7,7 +7,7 @@ import {
 export const DEFAULT_PHYSICAL_PLAN_CACHE_CAPACITY = 128;
 export const PHYSICAL_PLAN_CACHE_SCHEMA_REVISION = 'physical-plan-cache-v1';
 export const DEFAULT_PHYSICAL_PLAN_PLANNER_REVISION = 'item-card-planner-v3-overrides';
-export const DEFAULT_PHYSICAL_PLAN_RENDERER_REVISION = 'item-card-renderer-css-v3';
+export const DEFAULT_PHYSICAL_PLAN_RENDERER_REVISION = 'item-card-renderer-css-v4';
 export const EMPTY_PHYSICAL_PLAN_FINGERPRINT = 'none';
 
 export interface PhysicalPlanArtworkFingerprint {
@@ -320,6 +320,7 @@ function createCanonicalItemFingerprint(item: ItemCardData): object {
 		detail: item.detail ?? null,
 		imagePath: item.imagePath ?? null,
 		sourceText: item.sourceText ?? null,
+		sourceDisplayOverride: item.sourceDisplayOverride ?? null,
 		hasImage: item.hasImage,
 		rarity: item.rarity ?? null,
 		attunement: item.attunement ?? null,

@@ -9,6 +9,7 @@ export interface ArtworkAssetVault {
 export interface ArtworkImportPayload {
 	data: ArrayBuffer;
 	fileName: string;
+	mimeType?: string;
 }
 
 export async function storeImportedArtwork(

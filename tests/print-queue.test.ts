@@ -106,3 +106,33 @@ void test('reload reconstructs the same effective data without duplicating the s
 		applyCardOverrides(source, queue.getEntries()[0]?.overrides).item,
 	);
 });
+
+void test('temporary artwork persists only a lightweight session reference', () => {
+	const queue = createQueue();
+	queue.add('items/source.md', {
+		artwork: {
+			kind: 'temporary',
+			id: 'session-art-1',
+			name: 'choice.png',
+			origin: 'local',
+		},
+	});
+	const serialized = JSON.stringify(queue.serialize());
+	assert.match(serialized, /session-art-1/u);
+	assert.doesNotMatch(serialized, /blob:|base64|data:image/iu);
+});
+
+void test('queue reset remains a working draft until Save and other entries stay isolated', () => {
+	const queue = createQueue();
+	const first = queue.add('items/source.md', { title: 'First edit' });
+	const second = queue.add('items/source.md', { title: 'Second edit' });
+	const storedBeforeReset = structuredClone(first.overrides);
+	const resetWorkingDraft = undefined;
+	assert.deepEqual(queue.getEntries()[0]?.overrides, storedBeforeReset);
+	queue.updateOverrides(first.id, resetWorkingDraft);
+	assert.equal(queue.getEntries().find((entry) => entry.id === first.id)?.overrides, undefined);
+	assert.deepEqual(
+		queue.getEntries().find((entry) => entry.id === second.id)?.overrides,
+		{ title: 'Second edit' },
+	);
+});

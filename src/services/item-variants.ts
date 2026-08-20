@@ -104,6 +104,11 @@ export function selectItemVariant(
 	return discoverItemVariants(source, items).find((variant) => variant.id === variantId);
 }
 
+/** Concise UI label only; variant identity and generated item title are unchanged. */
+export function getVariantDisplayLabel(variant: ItemCardVariant): string {
+	return variant.baseItem?.name ?? variant.label;
+}
+
 export function createVariantId(label: string): string {
 	return label
 		.normalize('NFKD')
@@ -135,7 +140,9 @@ function parseVariantSection(markdown: string): ParsedVariantSection {
 	const stats: Partial<ItemCardData> = {};
 	const retained: string[] = [];
 	for (const line of markdown.split(/\r?\n/gu)) {
-		const match = line.match(/^\s*(?:[-*]\s+)?\*\*([^*]+)\*\*\s*:\s*(.*?)\s*$/u);
+		const match = line.match(
+			/^\s*(?:[-*]\s+)?(?:\*\*)?([^:*]+?)(?:\*\*)?\s*:\s*(.*?)\s*$/u,
+		);
 		if (!match) {
 			retained.push(line);
 			continue;
@@ -161,9 +168,20 @@ function assignVariantStat(
 	const clean = cleanInlineValue(value);
 	switch (label) {
 		case 'damage':
+			if (clean) {
+				stats.damage = clean;
+			}
+			return true;
+		case 'one-handed':
+		case 'one handed':
+		case 'one-handed damage':
+		case 'one handed damage':
 			stats.damage = clean;
 			return true;
 		case 'two-handed damage':
+		case 'two handed damage':
+		case 'two-handed':
+		case 'two handed':
 		case 'damage (two-handed)':
 			stats.damageTwoHanded = clean;
 			return true;
@@ -195,6 +213,7 @@ function cleanInlineValue(value: string): string {
 	return value
 		.replace(/!\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/gu, '$1')
 		.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/gu, (_match, target: string, alias?: string) => alias ?? target)
+		.replace(/\[([^\]]+)\]\([^)]+\)/gu, '$1')
 		.replace(/[*_`]/gu, '')
 		.trim();
 }

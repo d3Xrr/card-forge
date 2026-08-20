@@ -8,7 +8,10 @@ import {
 } from '../src/renderer/artwork-orientation';
 import { parseDescriptionHeading } from '../src/renderer/safe-markdown-renderer';
 import { buildItemIdentityLines } from '../src/renderer/item-card-renderer';
-import { formatSourceDisplay } from '../src/renderer/source-formatter';
+import {
+	formatSourceDisplay,
+	resolveSourceDisplay,
+} from '../src/renderer/source-formatter';
 
 void test('recognizes H2 and H3 description headings without accepting other lines', () => {
 	assert.deepEqual(parseDescriptionHeading('## Crafting'), { level: 2, text: 'Crafting' });
@@ -120,4 +123,16 @@ void test('source formatting falls back to readable source text or identifiers',
 	);
 	assert.equal(formatSourceDisplay('homebrew-source'), 'Homebrew Source');
 	assert.equal(formatSourceDisplay(undefined, undefined), undefined);
+});
+
+void test('explicit source display text is literal and reset restores canonical formatting', () => {
+	const sourceText = "Dungeon Master's Guide (2024), p. 230";
+	assert.equal(resolveSourceDisplay('xdmg', sourceText, undefined), "DMG '24 · p. 230");
+	assert.equal(resolveSourceDisplay('xdmg', sourceText, 'Test'), 'Test');
+	assert.equal(
+		resolveSourceDisplay('third-party', 'Third Party Almanac p. 40', 'Shelf A'),
+		'Shelf A',
+	);
+	assert.equal(resolveSourceDisplay('xdmg', sourceText, ''), '');
+	assert.equal(resolveSourceDisplay('xdmg', sourceText, undefined), "DMG '24 · p. 230");
 });
