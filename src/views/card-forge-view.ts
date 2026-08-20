@@ -950,18 +950,22 @@ export class CardForgeView extends ItemView {
 			const persistence = row.createDiv({
 				cls: 'ttrpg-card-forge__artwork-persistence',
 			});
+			persistence.createSpan({
+				cls: 'ttrpg-card-forge__artwork-status',
+				text: createTemporaryArtworkStatus(),
+			});
 			const persistLabel = persistence.createEl('label', {
 				cls: 'ttrpg-card-forge__artwork-persist',
+				attr: {
+					title: 'Save imported artwork to the vault so it remains available after restart.',
+				},
 			});
 			const persistCheckbox = persistLabel.createEl('input', {
 				type: 'checkbox',
+				cls: 'ttrpg-card-forge__artwork-persist-checkbox',
 			});
 			persistCheckbox.checked = this.persistArtworkToVault;
 			persistLabel.createSpan({ text: 'Save to vault' });
-			persistence.createDiv({
-				cls: 'ttrpg-card-forge__artwork-helper',
-				text: 'Keeps this artwork after Obsidian restarts.',
-			});
 			persistCheckbox.addEventListener('change', () => {
 				this.persistArtworkToVault = persistCheckbox.checked;
 			});
@@ -970,12 +974,6 @@ export class CardForgeView extends ItemView {
 		const temporary = artworkOverride?.kind === 'temporary'
 			? this.temporaryArtworkStore.get(artworkOverride.id)
 			: undefined;
-		if (temporary) {
-			row.createDiv({
-				cls: 'ttrpg-card-forge__artwork-status',
-				text: createTemporaryArtworkStatus(temporary.name),
-			});
-		}
 		const warning = createMissingArtworkWarning(
 			artworkOverride?.kind === 'temporary' && !temporary,
 			effective.source.hasImage,

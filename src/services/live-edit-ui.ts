@@ -108,10 +108,8 @@ export function createMissingArtworkWarning(
 		: undefined;
 }
 
-export function createTemporaryArtworkStatus(
-	name: string | undefined,
-): string {
-	return `Temporary artwork · available until restart${name ? ` · ${name}` : ''}`;
+export function createTemporaryArtworkStatus(): string {
+	return 'Temporary until restart';
 }
 
 export function createPreviewModeState(editing: boolean): PreviewModeState {

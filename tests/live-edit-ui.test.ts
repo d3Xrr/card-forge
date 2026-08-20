@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { createCardOverridesFingerprint } from '../src/services/card-overrides';
@@ -71,10 +72,35 @@ void test('missing temporary artwork exposes recovery without changing queue ide
 	});
 	assert.equal(createMissingArtworkWarning(false, true), undefined);
 	assert.equal(createMissingArtworkWarning(true, false)?.showUseSourceArtwork, false);
-	assert.equal(
-		createTemporaryArtworkStatus('warhammer.png'),
-		'Temporary artwork · available until restart · warhammer.png',
-	);
+	assert.equal(createTemporaryArtworkStatus(), 'Temporary until restart');
+});
+
+void test('temporary artwork uses one concise accessible persistence row', () => {
+	const view = readFileSync('src/views/card-forge-view.ts', 'utf8');
+	assert.match(view, /ttrpg-card-forge__artwork-persistence/u);
+	assert.match(view, /ttrpg-card-forge__artwork-persist-checkbox/u);
+	assert.match(view, /createTemporaryArtworkStatus\(\)/u);
+	assert.match(view, /Save to vault/u);
+	assert.match(view, /title: 'Save imported artwork to the vault/u);
+	assert.doesNotMatch(view, /Keeps this artwork after Obsidian restarts/u);
+	assert.doesNotMatch(view, /Load image/u);
+	assert.match(view, /text: 'Use image'/u);
+});
+
+void test('temporary artwork checkbox is excluded from full-width editor inputs', () => {
+	const css = readFileSync('styles.css', 'utf8');
+	const persistence = getCssRule(css, '.ttrpg-card-forge__artwork-persistence');
+	const label = getCssRule(css, '.ttrpg-card-forge__artwork-persist');
+	const checkbox = getCssRule(css, '.ttrpg-card-forge__artwork-persist-checkbox');
+
+	assert.match(persistence, /display:\s*flex/iu);
+	assert.match(persistence, /justify-content:\s*space-between/iu);
+	assert.match(persistence, /flex-wrap:\s*wrap/iu);
+	assert.match(label, /white-space:\s*nowrap/iu);
+	assert.match(checkbox, /width:\s*var\(--checkbox-size\)/iu);
+	assert.match(checkbox, /flex:\s*0\s+0\s+auto/iu);
+	assert.doesNotMatch(checkbox, /width:\s*100%/iu);
+	assert.match(css, /editor-field input:not\(\[type="checkbox"\]\)/u);
 });
 
 void test('preview toolbar chips are concise UI state and do not enter override fingerprints', () => {
@@ -101,3 +127,8 @@ void test('preview toolbar chips are concise UI state and do not enter override 
 		editActive: true,
 	});
 });
+
+function getCssRule(css: string, selector: string): string {
+	const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+	return css.match(new RegExp(`${escaped}\\s*\\{([^}]+)\\}`, 'u'))?.[1] ?? '';
+}

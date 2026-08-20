@@ -347,26 +347,40 @@
 }
 
 .ttrpg-card-forge__artwork-persistence {
-	display: grid;
-	gap: 2px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: var(--size-4-1) var(--size-4-3);
+	min-width: 0;
 }
 
 .ttrpg-card-forge__artwork-persist {
-	display: flex;
+	display: inline-flex;
+	flex: 0 0 auto;
 	align-items: center;
 	gap: var(--size-4-1);
 	color: var(--text-normal);
+	white-space: nowrap;
 }
 
-.ttrpg-card-forge__artwork-persist input {
-	width: auto;
+.ttrpg-card-forge__artwork-persist-checkbox {
+	flex: 0 0 auto;
+	width: var(--checkbox-size);
+	min-width: var(--checkbox-size);
+	height: var(--checkbox-size);
+	margin: 0;
 }
 
-.ttrpg-card-forge__artwork-helper,
 .ttrpg-card-forge__artwork-status,
 .ttrpg-card-forge__artwork-validation {
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
+}
+
+.ttrpg-card-forge__artwork-persistence .ttrpg-card-forge__artwork-status {
+	flex: 1 1 auto;
+	min-width: max-content;
 }
 
 .ttrpg-card-forge__artwork-validation {
@@ -388,7 +402,7 @@
 	font-size: var(--font-ui-smaller);
 }
 
-.ttrpg-card-forge__editor-field input,
+.ttrpg-card-forge__editor-field input:not([type="checkbox"]),
 .ttrpg-card-forge__editor-field select,
 .ttrpg-card-forge__editor-field textarea {
 	width: 100%;
