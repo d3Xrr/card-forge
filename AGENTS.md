@@ -4,7 +4,7 @@
 
 TTRPG Card Forge is an Obsidian desktop plugin that creates printable item cards from structured Markdown in a user's vault. Phase 1 indexes TTRPG CLI/5etools-style item frontmatter. Phase 2 owns normalized item content, semantic pagination, artwork handling, and card DOM rendering. Phase 3 owns the persistent print queue, deterministic physical-card planning, A4 sheet geometry, and local PDF export.
 
-The plugin ID is permanently `ttrpg-card-forge`. Do not rename it.
+The plugin ID is permanently `ttrpg-card-forge`. Do not rename it. Phase 4B owns non-destructive print overrides, same-note variant resolution, manual card boundaries, and managed artwork imports.
 
 ## Architecture
 
@@ -34,6 +34,19 @@ ItemCardData
 → Obsidian Vault API storage
 ```
 
+The Phase 4B effective-card flow is:
+
+```text
+indexed source ItemCardData (read-only)
+→ same-note variant resolution
+→ persisted CardOverrides
+→ effective ItemCardData
+→ deterministic override fingerprint / physical-plan cache key
+→ canonical physical planner and Phase 3 export flow
+```
+
+Overrides belong to queue entries and plugin data, never source Markdown. `///CARD BREAK///` is an editor-only delimiter that becomes an explicit page boundary and must not appear in rendered rules. Variant discovery must remain structural and data-driven; do not add item-name condition trees. Editor code never owns physical pagination or card rendering; it supplies effective data to the canonical planner and renderer.
+
 PDF code must never own or reproduce item-content pagination. It consumes completed `ItemCardPage[]` from the canonical physical planner. The existing card renderer remains the visual source of truth; do not redraw card content with PDF primitives.
 
 ## Physical print invariants
@@ -53,10 +66,12 @@ Centralize these values in the physical profile and A4 geometry modules. Do not 
 ## Safety and data rules
 
 - Treat all source vault files and artwork as read-only. Never modify anything under the configured item folder.
+- Imported artwork may be created only through the Vault API in the managed `Card Forge Assets` folder. Use collision-safe filenames and never overwrite an existing asset.
+- HTTPS artwork must be explicitly requested by the user, imported locally before planning, and never remain a render/export-time network dependency.
 - Use Obsidian `Vault` and `MetadataCache` APIs for vault content.
 - PDF output must use `Vault.createBinary` in the configured vault-relative export folder.
 - Do not use Node filesystem APIs for vault content. Node filesystem access is permitted only in local development/build scripts such as deployment.
-- Keep the plugin local-first and offline. Do not add external APIs, CDNs, telemetry, uploads, remote code, or export-time network dependencies.
+- Keep the plugin local-first and offline after import. The only network exception is a user-initiated HTTPS artwork import; do not add external game-data APIs, CDNs, telemetry, uploads, remote code, or export-time network dependencies.
 - Do not include copyrighted D&D text, images, PDFs, or datasets in the repository.
 - Store vault paths as vault-relative plugin settings. Never hard-code an absolute production path.
 - The ignored `dev.config.json` is local tooling configuration and is the only expected location for an absolute development vault path.

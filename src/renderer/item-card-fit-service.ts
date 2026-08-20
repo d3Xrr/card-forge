@@ -538,6 +538,12 @@ export function createItemCardPageMeasurementKey(
 			mastery: page.item.mastery ?? null,
 			cost: page.item.cost ?? null,
 			weight: page.item.weight ?? null,
+			typeText: page.item.typeText ?? null,
+			rarityText: page.item.rarityText ?? null,
+			attunementText: page.item.attunementText ?? null,
+			manualRuleSegments: page.item.manualRuleSegments
+				? [...page.item.manualRuleSegments]
+				: null,
 		},
 		pageIndex: page.pageIndex,
 		pageCount: page.pageCount,

@@ -5,6 +5,7 @@ import { A4_CARDS_PER_SHEET } from '../export/a4-sheet-geometry';
 import type { ItemCardData } from '../models/item';
 import type { ItemCardPage } from '../models/item-card-page';
 import type { PrintQueueService } from '../models/print-queue';
+import type { CardOverrides } from '../models/card-overrides';
 import {
 	applyCanonicalCardSize,
 	PHYSICAL_CARD_PROFILE,
@@ -24,15 +25,25 @@ import {
 } from '../renderer/item-card-renderer';
 import { formatSourceDisplay } from '../renderer/source-formatter';
 import {
+	isSupportedArtworkPath,
 	resolveArtworkDescriptor,
 } from '../services/artwork-resolver';
+import { ArtworkImporter } from '../services/artwork-importer';
+import {
+	applyCardOverrides,
+	areCardOverridesEqual,
+	createCardOverridesFingerprint,
+	normalizeCardOverrides,
+} from '../services/card-overrides';
+import {
+	discoverItemVariants,
+	type ItemCardVariant,
+} from '../services/item-variants';
 import type { ItemIndex } from '../services/item-index';
 import {
-	areQueuePlanInputsCurrent,
 	isIndexedPlanningInputCurrent,
 	LatestRequestGate,
 	reconcileVisibleSelection,
-	resolveQueuePlanMap,
 	selectRelativePageIndex,
 	shouldRequestSelectedPlan,
 	type LatestRequestToken,
@@ -56,9 +67,10 @@ import {
 	type PlanningCacheStatus,
 	PlanningPerformanceMonitor,
 } from '../services/planning-performance';
+import { DebouncedAction } from '../services/debounced-action';
 
 export const CARD_FORGE_VIEW_TYPE = 'ttrpg-card-forge-view';
-const PHYSICAL_PLAN_RENDER_SETTINGS_FINGERPRINT = 'card-render-settings-v1';
+const PHYSICAL_PLAN_RENDER_SETTINGS_FINGERPRINT = 'card-render-settings-v2-live-edit';
 
 interface PhysicalPlanLookup {
 	identity: PhysicalPlanCacheIdentity;
@@ -70,6 +82,14 @@ interface PhysicalPlanLookup {
 	promise?: Promise<FittedItemCardPlan>;
 }
 
+interface EffectiveCardInput {
+	source: ItemCardData;
+	item: ItemCardData;
+	overrides?: CardOverrides;
+	overrideFingerprint: string;
+	variant?: ItemCardVariant;
+}
+
 export class CardForgeView extends ItemView {
 	private readonly artworkBounds = new ArtworkBoundsService();
 	private readonly cardRenderer = new ItemCardRenderer(this.artworkBounds);
@@ -78,6 +98,7 @@ export class CardForgeView extends ItemView {
 		this.artworkBounds,
 	);
 	private readonly pdfExportService: PdfExportService;
+	private readonly artworkImporter: ArtworkImporter;
 	private searchInput: HTMLInputElement | null = null;
 	private totalCountElement: HTMLElement | null = null;
 	private filteredCountElement: HTMLElement | null = null;
@@ -90,6 +111,11 @@ export class CardForgeView extends ItemView {
 	private pageLabelElement: HTMLElement | null = null;
 	private addToQueueButton: HTMLButtonElement | null = null;
 	private openSourceButton: HTMLButtonElement | null = null;
+	private editorElement: HTMLElement | null = null;
+	private editorStatusElement: HTMLElement | null = null;
+	private previewModeButton: HTMLButtonElement | null = null;
+	private editModeButton: HTMLButtonElement | null = null;
+	private previewIndicatorElement: HTMLElement | null = null;
 	private queueListElement: HTMLElement | null = null;
 	private queueSummaryElement: HTMLElement | null = null;
 	private queueStatusElement: HTMLElement | null = null;
@@ -120,6 +146,11 @@ export class CardForgeView extends ItemView {
 	private currentArtworkRevisionFingerprint: string | undefined;
 	private currentPreviewPlanKey: string | undefined;
 	private exportInProgress = false;
+	private isEditMode = false;
+	private draftOverrides: CardOverrides | undefined;
+	private appliedOverrides: CardOverrides | undefined;
+	private editingQueueEntryId: string | undefined;
+	private readonly editorPreviewDebounce = new DebouncedAction(350);
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -131,6 +162,7 @@ export class CardForgeView extends ItemView {
 	) {
 		super(leaf);
 		this.pdfExportService = new PdfExportService(this.app, this.cardRenderer);
+		this.artworkImporter = new ArtworkImporter(this.app);
 	}
 
 	getViewType(): string {
@@ -174,6 +206,8 @@ export class CardForgeView extends ItemView {
 			this.registerDomEvent(this.searchInput, 'input', () => {
 				const selectionChanged = this.renderBrowser();
 				if (selectionChanged) {
+					this.resetEditorSession();
+					this.renderEditor();
 					this.renderPreview();
 				}
 			});
@@ -212,9 +246,14 @@ export class CardForgeView extends ItemView {
 
 		this.unsubscribeFromIndex = this.itemIndex.subscribe(() => {
 			const selectionChanged = this.renderBrowser();
+			if (selectionChanged) {
+				this.resetEditorSession();
+				this.renderEditor();
+			}
 			const selectedItem = this.findSelectedItem();
-			const selectedIdentity = selectedItem
-				? this.createPhysicalPlanRequest(selectedItem).identity.key
+			const effective = selectedItem ? this.createEffectiveCardInput(selectedItem) : undefined;
+			const selectedIdentity = effective
+				? this.createPhysicalPlanRequest(effective).identity.key
 				: undefined;
 			const effectivePlanChanged = selectedIdentity === undefined
 				? this.currentPreviewPlanKey !== undefined
@@ -242,6 +281,7 @@ export class CardForgeView extends ItemView {
 		if (this.overflowFrame !== null) {
 			window.cancelAnimationFrame(this.overflowFrame);
 		}
+		this.editorPreviewDebounce.cancel();
 		this.cardResizeObserver?.disconnect();
 		this.previewGeneration += 1;
 		this.queuePlanGeneration += 1;
@@ -281,10 +321,27 @@ export class CardForgeView extends ItemView {
 			cls: 'ttrpg-card-forge__preview',
 			attr: { 'aria-label': 'Card preview' },
 		});
-		preview.createEl('h3', {
+		const previewHeader = preview.createDiv({ cls: 'ttrpg-card-forge__preview-header' });
+		previewHeader.createEl('h3', {
 			text: 'Card preview',
 			cls: 'ttrpg-card-forge__panel-heading',
 		});
+		const modeToggle = previewHeader.createDiv({ cls: 'ttrpg-card-forge__mode-toggle' });
+		this.previewModeButton = modeToggle.createEl('button', {
+			text: 'Preview',
+			attr: { type: 'button' },
+		});
+		this.editModeButton = modeToggle.createEl('button', {
+			text: 'Edit card',
+			attr: { type: 'button' },
+		});
+		this.previewIndicatorElement = previewHeader.createSpan({
+			cls: 'ttrpg-card-forge__preview-indicator',
+		});
+		this.registerDomEvent(this.previewModeButton, 'click', () => this.setEditMode(false));
+		this.registerDomEvent(this.editModeButton, 'click', () => this.setEditMode(true));
+		this.editorElement = preview.createDiv({ cls: 'ttrpg-card-forge__editor' });
+		this.editorElement.hidden = true;
 		this.pageNavigationElement = preview.createDiv({
 			cls: 'ttrpg-card-forge__page-navigation',
 			attr: { 'aria-label': 'Card page navigation' },
@@ -367,6 +424,7 @@ export class CardForgeView extends ItemView {
 
 	private render(): void {
 		this.renderBrowser();
+		this.renderEditor();
 		this.renderPreview();
 		this.renderQueue();
 	}
@@ -434,48 +492,367 @@ export class CardForgeView extends ItemView {
 			return;
 		}
 		this.selectedFilePath = filePath;
+		this.resetEditorSession();
 		this.currentPageIndex = 0;
 		this.renderBrowser();
+		this.renderEditor();
 		this.renderPreview();
 	}
 
-	private renderPreview(): void {
+	private setEditMode(editing: boolean): void {
+		this.isEditMode = editing;
+		this.renderEditor();
+	}
+
+	private resetEditorSession(): void {
+		this.draftOverrides = undefined;
+		this.appliedOverrides = undefined;
+		this.editingQueueEntryId = undefined;
+		this.editorPreviewDebounce.cancel();
+	}
+
+	private renderEditor(): void {
+		if (!this.editorElement) {
+			return;
+		}
+		this.editorElement.hidden = !this.isEditMode;
+		this.editorElement.parentElement?.toggleClass('is-editing', this.isEditMode);
+		this.previewModeButton?.toggleClass('is-active', !this.isEditMode);
+		this.editModeButton?.toggleClass('is-active', this.isEditMode);
+		this.editorElement.empty();
+		if (!this.isEditMode) {
+			return;
+		}
+		const source = this.findSelectedItem();
+		if (!source) {
+			this.editorElement.createDiv({ cls: 'ttrpg-card-forge__empty', text: 'Select an item to edit its print card.' });
+			return;
+		}
+		const effective = this.createEffectiveCardInput(source);
+		const variants = discoverItemVariants(source, this.itemIndex.getItems());
+		if (variants.length > 0) {
+			const variantRow = this.createEditorField('Variant');
+			const variantSelect = variantRow.createEl('select');
+			variantSelect.createEl('option', { text: 'Source item', value: '' });
+			for (const variant of variants) {
+				variantSelect.createEl('option', { text: variant.label, value: variant.id });
+			}
+			variantSelect.value = this.draftOverrides?.variant?.id ?? '';
+			variantSelect.addEventListener('change', () => {
+				this.updateDraft((draft) => {
+					if (variantSelect.value) {
+						draft.variant = { id: variantSelect.value };
+					} else {
+						delete draft.variant;
+					}
+				});
+				this.renderEditor();
+			});
+		}
+
+		this.appendTextEditor('Title', effective.item.name, (value) => this.updateDraft((draft) => {
+			draft.title = value;
+		}));
+		this.appendTextEditor('Type', effective.item.typeText ?? getEditableTypeText(effective.item), (value) => this.updateDraft((draft) => {
+			draft.typeText = value || null;
+		}));
+		this.appendTextEditor('Rarity', effective.item.rarityText ?? (effective.item.rarity ? humanizeSlug(effective.item.rarity) : ''), (value) => this.updateDraft((draft) => {
+			draft.rarityText = value || null;
+		}));
+		this.appendTextEditor('Attunement', effective.item.attunementText ?? (effective.item.attunement ? 'Requires attunement' : ''), (value) => this.updateDraft((draft) => {
+			draft.attunementText = value || null;
+		}));
+		this.appendTextEditor('Damage', effective.item.damage ?? '', (value) => this.updateStatDraft('damage', value || null));
+		this.appendTextEditor('Two-handed damage', effective.item.damageTwoHanded ?? '', (value) => this.updateStatDraft('damageTwoHanded', value || null));
+		this.appendTextEditor('Properties', effective.item.properties?.join(', ') ?? '', (value) => this.updateDraft((draft) => {
+			draft.stats = { ...draft.stats, properties: value ? value.split(',').map((entry) => entry.trim()).filter(Boolean) : null };
+		}));
+		this.appendTextEditor('Mastery', effective.item.mastery ?? '', (value) => this.updateStatDraft('mastery', value || null));
+		this.appendTextEditor('Range', effective.item.range ?? '', (value) => this.updateStatDraft('range', value || null));
+		this.appendTextEditor('Weight', effective.item.weight?.toString() ?? '', (value) => this.updateDraft((draft) => {
+			draft.stats = { ...draft.stats, weight: value ? Number(value) : null };
+		}), 'number');
+		this.appendTextEditor('Cost', effective.item.cost ?? '', (value) => this.updateStatDraft('cost', value || null));
+
+		const rulesRow = this.createEditorField('Rules markdown', true);
+		const rules = rulesRow.createEl('textarea', {
+			cls: 'ttrpg-card-forge__editor-rules',
+			attr: { rows: '10', placeholder: 'Rules markdown' },
+		});
+		rules.value = this.draftOverrides?.rulesMarkdown ?? effective.item.description;
+		rules.addEventListener('input', () => this.updateDraft((draft) => {
+			draft.rulesMarkdown = rules.value;
+		}));
+		const breakButton = rulesRow.createEl('button', {
+			text: 'Insert card break',
+			attr: { type: 'button' },
+		});
+		breakButton.addEventListener('click', () => {
+			const insertion = '\n\n///CARD BREAK///\n\n';
+			rules.setRangeText(insertion, rules.selectionStart, rules.selectionEnd, 'end');
+			rules.dispatchEvent(new Event('input'));
+			rules.focus();
+		});
+
+		this.appendTextEditor('Source', effective.item.sourceText ?? '', (value) => this.updateDraft((draft) => {
+			draft.sourceText = value || null;
+		}));
+		this.appendArtworkEditor(effective);
+
+		this.editorStatusElement = this.editorElement.createDiv({
+			cls: 'ttrpg-card-forge__editor-status',
+			attr: { role: 'status', 'aria-live': 'polite' },
+		});
+		this.setEditorStatus(this.getEditorStateLabel());
+		const actions = this.editorElement.createDiv({ cls: 'ttrpg-card-forge__editor-actions' });
+		const apply = actions.createEl('button', {
+			text: this.editingQueueEntryId ? 'Apply to queue' : 'Apply draft',
+			cls: 'mod-cta',
+			attr: { type: 'button' },
+		});
+		const discard = actions.createEl('button', { text: 'Discard', attr: { type: 'button' } });
+		const reset = actions.createEl('button', { text: 'Reset to source', attr: { type: 'button' } });
+		apply.addEventListener('click', () => this.applyEditorChanges());
+		discard.addEventListener('click', () => this.discardEditorChanges());
+		reset.addEventListener('click', () => this.resetEditorChanges());
+	}
+
+	private createEditorField(label: string, wide = false): HTMLElement {
+		if (!this.editorElement) {
+			throw new Error('Editor is not available.');
+		}
+		const row = this.editorElement.createDiv({
+			cls: `ttrpg-card-forge__editor-field${wide ? ' is-wide' : ''}`,
+		});
+		row.createEl('label', { text: label });
+		return row;
+	}
+
+	private appendTextEditor(
+		label: string,
+		value: string,
+		onInput: (value: string) => void,
+		type: 'text' | 'number' = 'text',
+	): void {
+		const row = this.createEditorField(label);
+		const input = row.createEl('input', { type });
+		input.value = value;
+		input.addEventListener('input', () => onInput(input.value.trim()));
+	}
+
+	private appendArtworkEditor(effective: EffectiveCardInput): void {
+		const row = this.createEditorField('Artwork', true);
+		const select = row.createEl('select');
+		for (const [value, label] of [
+			['source', 'Use source artwork'],
+			['none', 'No artwork'],
+			['vault', 'Vault path'],
+			['local', 'Import local file'],
+			['web', 'Import HTTPS URL'],
+		] as const) {
+			select.createEl('option', { value, text: label });
+		}
+		select.value = this.draftOverrides?.artwork?.kind ?? 'source';
+		const pathInput = row.createEl('input', { type: 'text', placeholder: 'Vault-relative artwork path' });
+		const artworkListId = 'ttrpg-card-forge-vault-artwork';
+		pathInput.setAttribute('list', artworkListId);
+		const artworkList = row.createEl('datalist', { attr: { id: artworkListId } });
+		for (const file of this.app.vault.getFiles()) {
+			if (isSupportedArtworkPath(file.path)) {
+				artworkList.createEl('option', { value: file.path });
+			}
+		}
+		pathInput.value = this.draftOverrides?.artwork?.kind === 'vault'
+			? this.draftOverrides.artwork.path
+			: effective.item.imagePath ?? '';
+		const fileInput = row.createEl('input', { type: 'file' });
+		fileInput.accept = 'image/avif,image/bmp,image/gif,image/jpeg,image/png,image/webp';
+		const webInput = row.createEl('input', { type: 'url', placeholder: 'https://example.com/art.png' });
+		const webButton = row.createEl('button', { text: 'Import web artwork', attr: { type: 'button' } });
+		const updateVisibility = (): void => {
+			pathInput.hidden = select.value !== 'vault';
+			fileInput.hidden = select.value !== 'local';
+			webInput.hidden = select.value !== 'web';
+			webButton.hidden = select.value !== 'web';
+		};
+		updateVisibility();
+		select.addEventListener('change', () => {
+			updateVisibility();
+			if (select.value === 'source') {
+				this.updateDraft((draft) => { delete draft.artwork; });
+			} else if (select.value === 'none') {
+				this.updateDraft((draft) => { draft.artwork = { kind: 'none' }; });
+			} else if (select.value === 'vault' && pathInput.value.trim()) {
+				this.updateDraft((draft) => { draft.artwork = { kind: 'vault', path: pathInput.value.trim() }; });
+			}
+		});
+		pathInput.addEventListener('input', () => this.updateDraft((draft) => {
+			draft.artwork = pathInput.value.trim()
+				? { kind: 'vault', path: pathInput.value.trim() }
+				: { kind: 'none' };
+		}));
+		fileInput.addEventListener('change', () => {
+			const file = fileInput.files?.[0];
+			if (file) {
+				void this.importEditorArtwork(() => this.artworkImporter.importLocalFile(file));
+			}
+		});
+		webButton.addEventListener('click', () => {
+			void this.importEditorArtwork(() => this.artworkImporter.importWebUrl(webInput.value));
+		});
+	}
+
+	private async importEditorArtwork(importArtwork: () => Promise<string>): Promise<void> {
+		this.setEditorStatus('Importing artwork…');
+		try {
+			const path = await importArtwork();
+			this.updateDraft((draft) => { draft.artwork = { kind: 'vault', path }; });
+			this.renderEditor();
+			new Notice(`Imported artwork to ${path}.`);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'Unknown import error';
+			this.setEditorStatus(`Artwork import failed: ${message}`);
+			new Notice(`Artwork import failed: ${message}`);
+		}
+	}
+
+	private updateStatDraft(
+		key: 'damage' | 'damageTwoHanded' | 'range' | 'mastery' | 'cost',
+		value: string | null,
+	): void {
+		this.updateDraft((draft) => {
+			draft.stats = { ...draft.stats, [key]: value };
+		});
+	}
+
+	private updateDraft(update: (draft: CardOverrides) => void): void {
+		const draft = structuredClone(this.draftOverrides ?? {});
+		update(draft);
+		this.draftOverrides = normalizeCardOverrides(draft);
+		this.scheduleEditorPreview();
+	}
+
+	private scheduleEditorPreview(): void {
+		this.setEditorStatus('Updating preview…');
+		// Invalidate immediately so an older in-flight fit cannot commit during
+		// the debounce window. The last completed DOM remains visible.
+		this.previewGeneration += 1;
+		this.previewRequestGate.invalidate();
+		this.currentPreviewPlanKey = undefined;
+		this.editorPreviewDebounce.schedule(() => {
+			this.renderPreview(true);
+		});
+	}
+
+	private applyEditorChanges(): void {
+		this.appliedOverrides = structuredClone(this.draftOverrides);
+		if (this.editingQueueEntryId) {
+			this.printQueue.updateOverrides(this.editingQueueEntryId, this.appliedOverrides);
+		}
+		this.setEditorStatus(`Applied · ${this.getEditorStateLabel()}`);
+	}
+
+	private discardEditorChanges(): void {
+		this.editorPreviewDebounce.cancel();
+		this.draftOverrides = structuredClone(this.appliedOverrides);
+		this.renderEditor();
+		this.renderPreview(true);
+	}
+
+	private resetEditorChanges(): void {
+		this.editorPreviewDebounce.cancel();
+		this.draftOverrides = undefined;
+		this.appliedOverrides = undefined;
+		if (this.editingQueueEntryId) {
+			this.printQueue.updateOverrides(this.editingQueueEntryId, undefined);
+		}
+		this.renderEditor();
+		this.renderPreview(true);
+	}
+
+	private setEditorStatus(message: string): void {
+		this.editorStatusElement?.setText(message);
+	}
+
+	private getEditorStateLabel(): string {
+		const state = this.draftOverrides ? 'Edited for print' : 'Source card';
+		return this.editingQueueEntryId
+			&& !areCardOverridesEqual(this.draftOverrides, this.appliedOverrides)
+			? `Unsaved changes · ${state}`
+			: state;
+	}
+
+	private createEffectiveCardInput(
+		source: ItemCardData,
+		overrides: CardOverrides | undefined = this.draftOverrides,
+	): EffectiveCardInput {
+		const normalized = normalizeCardOverrides(overrides);
+		const variants = discoverItemVariants(source, this.itemIndex.getItems());
+		const variant = variants.find((candidate) => candidate.id === normalized?.variant?.id);
+		const applied = applyCardOverrides(variant?.item ?? source, normalized);
+		return {
+			source,
+			item: applied.item,
+			...(applied.overrides ? { overrides: applied.overrides } : {}),
+			overrideFingerprint: createCardOverridesFingerprint(applied.overrides),
+			...(variant ? { variant } : {}),
+		};
+	}
+
+	private renderPreview(preserveExisting = false): void {
 		if (!this.cardHostElement || !this.diagnosticsElement || !this.openSourceButton || !this.addToQueueButton) {
 			return;
 		}
-		this.cancelPreviewObservation();
+		if (!preserveExisting) {
+			this.cancelPreviewObservation();
+		}
 		const generation = ++this.previewGeneration;
 		this.pageRenderGeneration += 1;
 		this.previewRequestGate.invalidate();
-		const item = this.findSelectedItem();
-		this.cardHostElement.empty();
-		this.diagnosticsElement.empty();
-		this.previewPages = [];
-		this.unfitPageIndexes = new Set<number>();
-		this.currentArtworkResourcePath = undefined;
-		this.currentArtworkRevisionFingerprint = undefined;
+		const source = this.findSelectedItem();
+		const effective = source ? this.createEffectiveCardInput(source) : undefined;
+		if (this.previewIndicatorElement) {
+			this.previewIndicatorElement.setText(effective
+				? [effective.variant
+					? `Variant: ${effective.variant.baseName ?? effective.variant.label}`
+					: undefined, effective.overrides ? 'Edited for print' : undefined]
+					.filter(Boolean)
+					.join(' · ')
+				: '');
+		}
+		if (!preserveExisting) {
+			this.cardHostElement.empty();
+			this.diagnosticsElement.empty();
+			this.previewPages = [];
+			this.unfitPageIndexes = new Set<number>();
+			this.currentArtworkResourcePath = undefined;
+			this.currentArtworkRevisionFingerprint = undefined;
+		}
 		this.currentPreviewPlanKey = undefined;
 		this.updatePageNavigation();
-		this.openSourceButton.disabled = !item;
-		this.addToQueueButton.disabled = !item;
+		this.openSourceButton.disabled = !source;
+		this.addToQueueButton.disabled = !source;
 
-		if (!item) {
+		if (!effective) {
 			this.cardHostElement.createDiv({ cls: 'ttrpg-card-forge__preview-empty', text: 'Select an item to preview its card.' });
 			return;
 		}
-		const lookup = this.beginPhysicalPlanLookup(item);
+		const lookup = this.beginPhysicalPlanLookup(effective);
 		this.currentPreviewPlanKey = lookup.identity.key;
 		if (!lookup.indexIsCurrent || !lookup.promise) {
-			this.cardHostElement.createDiv({
-				cls: 'ttrpg-card-forge__preview-empty',
-				text: 'Updating the item index…',
-			});
+			if (!preserveExisting) {
+				this.cardHostElement.createDiv({
+					cls: 'ttrpg-card-forge__preview-empty',
+					text: 'Updating the item index…',
+				});
+			}
+			this.setEditorStatus('Updating the item index…');
 			return;
 		}
 		const requestToken = this.previewRequestGate.begin(lookup.identity.key);
 		if (lookup.completed) {
 			this.applyPhysicalPlanToPreview(
-				item,
+				effective.item,
 				lookup,
 				lookup.completed,
 				generation,
@@ -483,8 +860,11 @@ export class CardForgeView extends ItemView {
 			);
 			return;
 		}
-		this.cardHostElement.createDiv({ cls: 'ttrpg-card-forge__preview-empty', text: 'Planning physical card pages…' });
-		void this.planAndRenderPreview(item, lookup, generation, requestToken);
+		if (!preserveExisting) {
+			this.cardHostElement.createDiv({ cls: 'ttrpg-card-forge__preview-empty', text: 'Planning physical card pages…' });
+		}
+		this.setEditorStatus('Updating preview…');
+		void this.planAndRenderPreview(effective.item, lookup, generation, requestToken);
 	}
 
 	private async planAndRenderPreview(
@@ -525,8 +905,12 @@ export class CardForgeView extends ItemView {
 				&& this.cardHostElement
 			) {
 				this.currentPreviewPlanKey = undefined;
-				this.cardHostElement.empty();
-				this.cardHostElement.createDiv({ cls: 'ttrpg-card-forge__preview-empty', text: 'Physical card planning failed. See the developer console.' });
+				if (this.previewPages.length > 0) {
+					this.setEditorStatus('Preview update failed; showing the last valid card.');
+				} else {
+					this.cardHostElement.empty();
+					this.cardHostElement.createDiv({ cls: 'ttrpg-card-forge__preview-empty', text: 'Physical card planning failed. See the developer console.' });
+				}
 			}
 		}
 	}
@@ -554,12 +938,13 @@ export class CardForgeView extends ItemView {
 			this.currentPageIndex,
 			Math.max(0, plan.pages.length - 1),
 		);
+		this.setEditorStatus(this.getEditorStateLabel());
 		this.renderCurrentPage();
 	}
 
-	private beginPhysicalPlanLookup(item: ItemCardData): PhysicalPlanLookup {
-		const trace = this.planningPerformance.start(item.name, 'physical-plan');
-		const request = this.createPhysicalPlanRequest(item, trace);
+	private beginPhysicalPlanLookup(input: EffectiveCardInput): PhysicalPlanLookup {
+		const trace = this.planningPerformance.start(input.item.name, 'physical-plan');
+		const request = this.createPhysicalPlanRequest(input, trace);
 		if (!request.indexIsCurrent) {
 			trace?.finish({ cacheStatus: 'miss' });
 			return {
@@ -588,7 +973,7 @@ export class CardForgeView extends ItemView {
 				request.identity,
 				() => this.cardFitService.fit(
 					this.containerEl.ownerDocument,
-					item,
+					input.item,
 					request.artworkResourcePath,
 					trace,
 					request.artworkRevisionFingerprint,
@@ -616,19 +1001,21 @@ export class CardForgeView extends ItemView {
 	}
 
 	private createPhysicalPlanRequest(
-		item: ItemCardData,
+		input: EffectiveCardInput,
 		trace?: ReturnType<PlanningPerformanceMonitor['start']>,
 	): Pick<
 		PhysicalPlanLookup,
 		'identity' | 'indexIsCurrent' | 'artworkResourcePath' | 'artworkRevisionFingerprint'
 	> {
+		const { source, item } = input;
 		const resolveArtwork = () => resolveArtworkDescriptor(this.app, item);
 		const artwork = trace
 			? trace.measure('artworkResolution', resolveArtwork)
 			: resolveArtwork();
 		const createRequest = () => {
-			const indexedSourceRevision = this.itemIndex.getSourceRevision(item.filePath);
-			const sourceFile = this.app.vault.getFileByPath(item.filePath);
+			const indexedSourceRevision = this.itemIndex.getSourceRevision(source.filePath);
+			const sourceFile = this.app.vault.getFileByPath(source.filePath);
+			const sourceArtwork = resolveArtworkDescriptor(this.app, source);
 			const indexIsCurrent = isIndexedPlanningInputCurrent(
 				indexedSourceRevision,
 				sourceFile
@@ -637,12 +1024,12 @@ export class CardForgeView extends ItemView {
 						size: sourceFile.stat.size,
 					}
 					: undefined,
-				item.hasImage,
-				Boolean(artwork),
+				source.hasImage,
+				Boolean(sourceArtwork),
 			);
 			const identity = createPhysicalPlanCacheIdentity({
 				item,
-				sourceFingerprint: this.itemIndex.getSourceFingerprint(item.filePath)
+				sourceFingerprint: this.itemIndex.getSourceFingerprint(source.filePath)
 					?? createEffectiveItemFingerprint(item),
 				...(artwork
 					? {
@@ -654,6 +1041,7 @@ export class CardForgeView extends ItemView {
 					}
 					: {}),
 				renderSettingsFingerprint: PHYSICAL_PLAN_RENDER_SETTINGS_FINGERPRINT,
+				overrideFingerprint: input.overrideFingerprint,
 			});
 			return {
 				identity,
@@ -731,27 +1119,29 @@ export class CardForgeView extends ItemView {
 		const items = this.itemIndex.getItems();
 		const itemsByPath = new Map(items.map((item) => [item.filePath, item]));
 		const warmPlans = new Map<string, PhysicalItemPlan>();
-		const queueItemPaths = new Set<string>();
+		const queueEntryIds = new Set<string>();
 		let indexIsStale = false;
-		const currentPlansByPath = new Map(
+		const currentPlansByEntry = new Map(
 			this.currentQueuePlan
 				.filter((resolved) => resolved.item && !resolved.unavailable)
-				.map((resolved) => [resolved.entry.filePath, resolved] as const),
+				.map((resolved) => [resolved.entry.id, resolved] as const),
 		);
 		for (const entry of entries) {
-			const item = itemsByPath.get(entry.filePath);
-			if (!item || queueItemPaths.has(item.filePath)) {
+			const source = itemsByPath.get(entry.filePath);
+			if (!source) {
 				continue;
 			}
-			queueItemPaths.add(item.filePath);
-			const request = this.createPhysicalPlanRequest(item);
+			queueEntryIds.add(entry.id);
+			const effective = this.createEffectiveCardInput(source, entry.overrides);
+			const request = this.createPhysicalPlanRequest(effective);
 			if (!request.indexIsCurrent) {
 				indexIsStale = true;
 				continue;
 			}
-			const currentPlan = currentPlansByPath.get(item.filePath);
+			const currentPlan = currentPlansByEntry.get(entry.id);
 			if (currentPlan?.cacheKey === request.identity.key) {
-				warmPlans.set(item.filePath, {
+				warmPlans.set(entry.id, {
+					item: effective.item,
 					pages: currentPlan.pages,
 					unfitPageIndexes: currentPlan.unfitPageIndexes,
 					cacheKey: currentPlan.cacheKey,
@@ -770,8 +1160,8 @@ export class CardForgeView extends ItemView {
 			const completed = this.physicalPlanCache.peek(request.identity);
 			if (completed) {
 				warmPlans.set(
-					item.filePath,
-					this.createQueuePhysicalPlan(request, completed),
+					entry.id,
+					this.createQueuePhysicalPlan(effective.item, request, completed),
 				);
 			}
 		}
@@ -781,7 +1171,7 @@ export class CardForgeView extends ItemView {
 			return;
 		}
 
-		if (warmPlans.size === queueItemPaths.size) {
+		if (warmPlans.size === queueEntryIds.size) {
 			this.currentQueuePlan = resolvePrintQueue(entries, items, warmPlans);
 			this.renderResolvedQueue();
 			return;
@@ -802,28 +1192,29 @@ export class CardForgeView extends ItemView {
 		let plans: Map<string, PhysicalItemPlan>;
 		try {
 			const itemsByPath = new Map(items.map((item) => [item.filePath, item]));
-			const availableEntries = entries.filter(
-				(entry) => itemsByPath.has(entry.filePath),
-			);
-			plans = await resolveQueuePlanMap(
-				availableEntries,
-				warmPlans,
-				async (filePath) => {
-					const item = itemsByPath.get(filePath);
-					if (!item) {
-						throw new Error(`Indexed queue item disappeared: ${filePath}`);
-					}
-					const lookup = this.beginPhysicalPlanLookup(item);
-					if (!lookup.indexIsCurrent || !lookup.promise) {
-						throw new ItemIndexStaleError();
-					}
-					return this.createQueuePhysicalPlan(
-						lookup,
-						await lookup.promise,
-					);
-				},
-				() => this.queueRequestGate.isCurrent(requestToken),
-			);
+			plans = new Map(warmPlans);
+			for (const entry of entries) {
+				if (plans.has(entry.id)) {
+					continue;
+				}
+				if (!this.queueRequestGate.isCurrent(requestToken)) {
+					break;
+				}
+				const source = itemsByPath.get(entry.filePath);
+				if (!source) {
+					continue;
+				}
+				const effective = this.createEffectiveCardInput(source, entry.overrides);
+				const lookup = this.beginPhysicalPlanLookup(effective);
+				if (!lookup.indexIsCurrent || !lookup.promise) {
+					throw new ItemIndexStaleError();
+				}
+				plans.set(entry.id, this.createQueuePhysicalPlan(
+					effective.item,
+					lookup,
+					await lookup.promise,
+				));
+			}
 		} catch (error) {
 			if (error instanceof ItemIndexStaleError) {
 				if (this.queueRequestGate.isCurrent(requestToken)) {
@@ -855,6 +1246,7 @@ export class CardForgeView extends ItemView {
 	}
 
 	private createQueuePhysicalPlan(
+		item: ItemCardData,
 		request: Pick<
 			PhysicalPlanLookup,
 			'identity' | 'artworkResourcePath' | 'artworkRevisionFingerprint'
@@ -862,6 +1254,7 @@ export class CardForgeView extends ItemView {
 		plan: FittedItemCardPlan,
 	): PhysicalItemPlan {
 		return {
+			item,
 			pages: plan.pages,
 			unfitPageIndexes: plan.unfitPageIndexes,
 			cacheKey: request.identity.key,
@@ -925,6 +1318,9 @@ export class CardForgeView extends ItemView {
 			cls: 'ttrpg-card-forge__queue-entry-name',
 			text: resolved.item?.name ?? resolved.entry.filePath,
 		});
+		if (resolved.entry.overrides) {
+			details.createSpan({ cls: 'ttrpg-card-forge__edited-badge', text: 'Edited for print' });
+		}
 		const metadata = resolved.unavailable
 			? 'Unavailable — remove this entry to export'
 			: resolved.unfitPageIndexes.size > 0
@@ -938,6 +1334,7 @@ export class CardForgeView extends ItemView {
 		appendQueueButton(controls, '+', `Increase ${resolved.item?.name ?? 'item'} quantity`, () => this.printQueue.increment(resolved.entry.id));
 		appendQueueButton(controls, '↑', `Move ${resolved.item?.name ?? 'item'} up`, () => this.printQueue.move(resolved.entry.id, -1), index === 0);
 		appendQueueButton(controls, '↓', `Move ${resolved.item?.name ?? 'item'} down`, () => this.printQueue.move(resolved.entry.id, 1), index === this.currentQueuePlan.length - 1);
+		appendQueueButton(controls, 'Edit', `Edit ${resolved.item?.name ?? 'item'} print card`, () => this.editQueueEntry(resolved.entry.id));
 		appendQueueButton(controls, 'Remove', `Remove ${resolved.item?.name ?? 'item'} from queue`, () => this.printQueue.remove(resolved.entry.id));
 	}
 
@@ -1023,24 +1420,20 @@ export class CardForgeView extends ItemView {
 	}
 
 	private isCurrentQueuePlanInput(): boolean {
-		const availablePlans = this.currentQueuePlan.flatMap((resolved) =>
-			resolved.item && !resolved.unavailable
-				? [{
-					filePath: resolved.item.filePath,
-					...(resolved.cacheKey ? { cacheKey: resolved.cacheKey } : {}),
-				}]
-				: [],
-		);
 		const itemsByPath = new Map(
 			this.itemIndex.getItems().map((item) => [item.filePath, item]),
 		);
-		return areQueuePlanInputsCurrent(availablePlans, (filePath) => {
-			const item = itemsByPath.get(filePath);
-			if (!item) {
-				return undefined;
+		return this.currentQueuePlan.every((resolved) => {
+			if (resolved.unavailable || !resolved.item || !resolved.cacheKey) {
+				return resolved.unavailable;
 			}
-			const request = this.createPhysicalPlanRequest(item);
-			return request.indexIsCurrent ? request.identity.key : undefined;
+			const source = itemsByPath.get(resolved.entry.filePath);
+			if (!source) {
+				return false;
+			}
+			const effective = this.createEffectiveCardInput(source, resolved.entry.overrides);
+			const request = this.createPhysicalPlanRequest(effective);
+			return request.indexIsCurrent && request.identity.key === resolved.cacheKey;
 		});
 	}
 
@@ -1060,9 +1453,28 @@ export class CardForgeView extends ItemView {
 	private addSelectedToQueue(): void {
 		const item = this.findSelectedItem();
 		if (item) {
-			this.printQueue.add(item.filePath);
+			this.printQueue.add(item.filePath, this.draftOverrides);
 			new Notice(`Added ${item.name} to the print queue.`);
 		}
+	}
+
+	private editQueueEntry(entryId: string): void {
+		const entry = this.printQueue.getEntries().find((candidate) => candidate.id === entryId);
+		if (!entry) {
+			return;
+		}
+		if (this.searchInput) {
+			this.searchInput.value = '';
+		}
+		this.selectedFilePath = entry.filePath;
+		this.editingQueueEntryId = entry.id;
+		this.appliedOverrides = structuredClone(entry.overrides);
+		this.draftOverrides = structuredClone(entry.overrides);
+		this.isEditMode = true;
+		this.currentPageIndex = 0;
+		this.renderBrowser();
+		this.renderEditor();
+		this.renderPreview();
 	}
 
 	private findSelectedItem(): ItemCardData | undefined {
@@ -1236,6 +1648,26 @@ function humanizeSlug(value: string): string {
 		.split('-')
 		.map((part) => part ? `${part[0]?.toLocaleUpperCase()}${part.slice(1)}` : part)
 		.join(' ');
+}
+
+function getEditableTypeText(item: ItemCardData): string {
+	if (!item.detail) {
+		return '';
+	}
+	let depth = 0;
+	for (let index = 0; index < item.detail.length; index += 1) {
+		const character = item.detail[index];
+		if (character === '(') {
+			depth += 1;
+		} else if (character === ')') {
+			depth = Math.max(0, depth - 1);
+		} else if (character === ',' && depth === 0) {
+			return item.detail.slice(0, index).trim();
+		}
+	}
+	const detail = item.detail.trim();
+	const rarity = item.rarity ? humanizeSlug(item.rarity).toLocaleLowerCase() : '';
+	return rarity && detail.toLocaleLowerCase().startsWith(rarity) ? '' : detail;
 }
 
 class ItemIndexStaleError extends Error {

@@ -567,6 +567,38 @@ void test('table fragments remain valid after final-page balancing', () => {
 	);
 });
 
+void test('manual breaks force new cards and leave source only on the final card', () => {
+	const item = createItem({
+		description: 'First rule.\n\nSecond rule.\n\nThird rule.',
+		manualRuleSegments: ['First rule.', 'Second rule.\n\nThird rule.'],
+	});
+	const pages = planItemCardPages(item, { artworkAvailable: false });
+	assert.ok(pages.length >= 2);
+	assert.equal(pages[0]?.kind, 'primary');
+	assert.equal(pages[1]?.kind, 'continuation');
+	assert.equal(pages[0]?.showSource, false);
+	assert.equal(pages.at(-1)?.showSource, true);
+	assert.equal(flattenPageContent(pages), 'First rule.\n\nSecond rule.\n\nThird rule.');
+});
+
+void test('multiple manual segments preserve lists, tables, and content order exactly once', () => {
+	const segments = [
+		'Opening rule.',
+		'- First\n- Second',
+		'| Die | Effect |\n| --- | --- |\n| 1 | One |\n| 2 | Two |',
+	];
+	const pages = planItemCardPages(createItem({
+		description: segments.join('\n\n'),
+		manualRuleSegments: segments,
+	}), { artworkAvailable: false });
+	assert.ok(pages.length >= 3);
+	assert.equal(pages.filter((page) => page.showSource).length, 1);
+	assert.equal(pages.at(-1)?.showSource, true);
+	assert.equal(normalizeWhitespace(flattenPageContent(pages)), normalizeWhitespace(segments.join('\n\n')));
+	assert.equal(pages.flatMap((page) => page.blocks).filter((block) => block.type === 'table').length, 1);
+	assert.equal(pages.flatMap((page) => page.blocks).filter((block) => block.type === 'unordered-list').length, 1);
+});
+
 function normalizeWhitespace(value: string): string {
 	return value.replace(/\s+/gu, ' ').trim();
 }

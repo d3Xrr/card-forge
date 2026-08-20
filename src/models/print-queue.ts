@@ -1,7 +1,14 @@
+import type { CardOverrides } from './card-overrides';
+import {
+	areCardOverridesEqual,
+	normalizeCardOverrides,
+} from '../services/card-overrides';
+
 export interface PrintQueueEntry {
 	id: string;
 	filePath: string;
 	quantity: number;
+	overrides?: CardOverrides;
 }
 
 export type PrintQueueListener = (entries: readonly PrintQueueEntry[]) => void;
@@ -26,9 +33,12 @@ export class PrintQueueService {
 		return () => this.listeners.delete(listener);
 	}
 
-	add(filePath: string): PrintQueueEntry {
+	add(filePath: string, overrides?: CardOverrides): PrintQueueEntry {
 		const normalizedPath = filePath.trim();
-		const existing = this.entries.find((entry) => entry.filePath === normalizedPath);
+		const normalizedOverrides = normalizeCardOverrides(overrides);
+		const existing = this.entries.find((entry) =>
+			entry.filePath === normalizedPath
+			&& areCardOverridesEqual(entry.overrides, normalizedOverrides));
 		if (existing) {
 			existing.quantity += 1;
 			this.emit();
@@ -39,10 +49,28 @@ export class PrintQueueService {
 			id: this.createId(),
 			filePath: normalizedPath,
 			quantity: 1,
+			...(normalizedOverrides ? { overrides: normalizedOverrides } : {}),
 		};
 		this.entries.push(entry);
 		this.emit();
 		return entry;
+	}
+
+	updateOverrides(id: string, overrides?: CardOverrides): void {
+		const entry = this.find(id);
+		if (!entry) {
+			return;
+		}
+		const normalized = normalizeCardOverrides(overrides);
+		if (areCardOverridesEqual(entry.overrides, normalized)) {
+			return;
+		}
+		if (normalized) {
+			entry.overrides = normalized;
+		} else {
+			delete entry.overrides;
+		}
+		this.emit();
 	}
 
 	increment(id: string): void {
@@ -114,7 +142,12 @@ export class PrintQueueService {
 export function serializePrintQueue(
 	entries: readonly PrintQueueEntry[],
 ): PrintQueueEntry[] {
-	return entries.map((entry) => ({ ...entry }));
+	return entries.map((entry) => ({
+		...entry,
+		...(entry.overrides
+			? { overrides: structuredClone(entry.overrides) }
+			: {}),
+	}));
 }
 
 export function deserializePrintQueue(value: unknown): PrintQueueEntry[] {
@@ -137,12 +170,20 @@ export function deserializePrintQueue(value: unknown): PrintQueueEntry[] {
 		if (!id || !filePath || quantity < 1) {
 			continue;
 		}
+		const overrides = normalizeCardOverrides(candidate.overrides);
 
-		const existing = entries.find((entry) => entry.filePath === filePath);
+		const existing = entries.find((entry) =>
+			entry.filePath === filePath
+			&& areCardOverridesEqual(entry.overrides, overrides));
 		if (existing) {
 			existing.quantity += quantity;
 		} else {
-			entries.push({ id, filePath, quantity });
+			entries.push({
+				id,
+				filePath,
+				quantity,
+				...(overrides ? { overrides } : {}),
+			});
 		}
 	}
 	return entries;

@@ -174,6 +174,22 @@ void test('resolves artwork resource and vault revision as one descriptor', () =
 	});
 });
 
+void test('a missing custom vault artwork path falls back safely', () => {
+	const app = {
+		vault: { getFileByPath: () => null },
+		metadataCache: { getFirstLinkpathDest: () => null },
+	} as unknown as App;
+	const item: ItemCardData = {
+		filePath: 'items/example.md',
+		name: 'Example Item',
+		description: 'Rules.',
+		imagePath: 'Card Forge Assets/missing.png',
+		hasImage: true,
+		rawTags: [],
+	};
+	assert.equal(resolveArtworkDescriptor(app, item), undefined);
+});
+
 void test('rejects invalid artwork cache capacities', () => {
 	assert.throws(() => new ArtworkBoundsCache(0), RangeError);
 	assert.throws(() => new ArtworkBoundsCache(1.5), RangeError);

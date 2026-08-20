@@ -17,4 +17,10 @@ export interface ItemCardData {
 	cost?: string;
 	weight?: number;
 	rawTags: string[];
+	/** Print-only display fields populated by the non-destructive editor. */
+	typeText?: string;
+	rarityText?: string;
+	attunementText?: string;
+	/** Segments are separated by explicit manual card boundaries. */
+	manualRuleSegments?: string[];
 }

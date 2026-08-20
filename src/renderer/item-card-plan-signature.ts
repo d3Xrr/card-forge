@@ -84,6 +84,10 @@ export interface ItemCardPlanItemSignature {
 	mastery: HashedPlanText | null;
 	cost: HashedPlanText | null;
 	weight: number | null;
+	typeText: HashedPlanText | null;
+	rarityText: HashedPlanText | null;
+	attunementText: HashedPlanText | null;
+	manualRuleSegments: HashedPlanText[];
 }
 
 export type MarkdownBlockSignature =
@@ -195,6 +199,10 @@ function createItemSignature(item: ItemCardData): ItemCardPlanItemSignature {
 		mastery: hashOptionalPlanText(item.mastery),
 		cost: hashOptionalPlanText(item.cost),
 		weight: item.weight ?? null,
+		typeText: hashOptionalPlanText(item.typeText),
+		rarityText: hashOptionalPlanText(item.rarityText),
+		attunementText: hashOptionalPlanText(item.attunementText),
+		manualRuleSegments: (item.manualRuleSegments ?? []).map(hashPlanText),
 	};
 }
 

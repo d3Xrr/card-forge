@@ -2,7 +2,7 @@
 
 TTRPG Card Forge is a desktop Obsidian plugin for turning structured item notes already stored in a user's vault into printable TTRPG cards. It indexes TTRPG CLI/5etools-style item Markdown, renders deterministic physical cards, and exports print-ready A4 PDF sheets without uploading vault content.
 
-Phase 3 adds a persistent print queue and local PDF export on top of the completed Phase 2 item renderer. Spells, feats, monsters, and other card types are not implemented yet.
+Phase 4B adds non-destructive, print-only live editing on top of the deterministic physical planner and local PDF export. Spells, feats, monsters, and other card types are not implemented yet.
 
 ## Current features
 
@@ -13,7 +13,12 @@ Phase 3 adds a persistent print queue and local PDF export on top of the complet
 - Uses one canonical physical profile for planning and export: 63.5 × 88.9 mm (2.5 × 3.5 inches), 750 × 1050 px at 300 DPI.
 - Scales the already-planned physical card for the visible preview, so pane width no longer determines its page count.
 - Provides a searchable item browser, source-note action, page navigation, and fit diagnostics.
+- Provides responsive **Preview** and **Edit** modes with debounced canonical replanning while the last completed preview stays visible.
+- Supports print-only overrides for title, type, rarity, attunement, rules Markdown, structured statistics, artwork, source text, and same-note variants.
+- Recognizes `///CARD BREAK///` on its own line as an explicit new physical-card boundary; the delimiter is never rendered.
+- Imports local files or explicitly requested HTTPS artwork into the managed vault folder `Card Forge Assets`, while also supporting source art, no art, and existing vault-relative art.
 - Adds selected items to a persistent print queue only when the user requests it.
+- Persists each queue entry's overrides and exposes them again through its **Edit** action after reload.
 - Supports quantity changes, removal, clearing, and accessible move-up/move-down ordering.
 - Keeps continuation pages together in copy order. A two-card item at quantity three becomes `1,2,1,2,1,2`.
 - Shows unique item types, total copies, physical cards, and required A4 pages.
@@ -27,11 +32,12 @@ Phase 3 adds a persistent print queue and local PDF export on top of the complet
 
 1. Open **TTRPG Card Forge** from the ribbon or command palette.
 2. Select an item and inspect its canonical physical-card pages.
-3. Choose **Add to print queue**. Adding the same item again increments its quantity.
-4. Use `+`, `−`, move-up, move-down, and remove controls to prepare the queue.
-5. Inspect the physical-card count and A4 sheet preview.
-6. Choose **Export PDF**.
-7. Open the generated PDF with **Open last PDF**.
+3. Optionally switch to **Edit**, make print-only changes, and use **Apply**, **Discard**, or **Reset to source**. Reset removes the override; it never edits the source note.
+4. Choose **Add to print queue**. Adding the same source with equivalent overrides increments its quantity; a different override state creates a distinct entry.
+5. Use **Edit**, `+`, `−`, move-up, move-down, and remove controls to prepare the queue.
+6. Inspect the physical-card count and A4 sheet preview.
+7. Choose **Export PDF**.
+8. Open the generated PDF with **Open last PDF**.
 
 A queue entry represents copies of an item, not a single rendered page. Every copy is fully emitted before the next copy begins, so continuation and Crafting cards remain adjacent to their primary card.
 
@@ -76,7 +82,7 @@ npm run lint
 npm run build
 ```
 
-The PDF pipeline uses the browser-compatible `html-to-image` and `pdf-lib` packages bundled into `main.js`. It does not use a CDN, remote service, system print dialog, private Electron API, or network request at export time.
+The PDF pipeline uses the browser-compatible `html-to-image` and `pdf-lib` packages bundled into `main.js`. It does not use a CDN, remote service, system print dialog, private Electron API, or network request at export time. An HTTPS request occurs only when the user explicitly chooses **Import web artwork**; the returned bytes are stored locally before rendering.
 
 ## Local development deploy
 
@@ -92,7 +98,7 @@ Deployment copies only `main.js`, `manifest.json`, and `styles.css` into:
 <vaultPath>/.obsidian/plugins/ttrpg-card-forge/
 ```
 
-Generated PDFs are written through Obsidian's Vault API to the configured export folder. Source files under the configured item folder remain read-only.
+Generated PDFs and explicitly imported artwork are written through Obsidian's Vault API. Artwork is stored in `Card Forge Assets`, never in the configured item-source folder. Source files under the configured item folder remain read-only.
 
 ## Manual or BRAT installation
 
@@ -102,7 +108,7 @@ Release tags must exactly match `manifest.json` without a `v` prefix. The GitHub
 
 ## Data and privacy
 
-TTRPG Card Forge is local-first and offline. It does not include D&D rules text or artwork, call external APIs, upload vault content, add telemetry, or download game data. Source Markdown and artwork are read-only. The only vault write performed by Phase 3 is the PDF explicitly requested by the user in the configured export folder.
+TTRPG Card Forge is local-first. It does not include D&D rules text or artwork, call game-data APIs, upload vault content, add telemetry, or download game data. Source Markdown and source artwork are read-only. Print overrides live in plugin data. Vault writes are limited to PDFs explicitly requested by the user and artwork explicitly imported by the user into the managed asset folder. Web artwork is fetched only from a user-supplied HTTPS URL, imported once, and then rendered locally without a continuing remote dependency.
 
 ## Project layout
 

@@ -39,6 +39,7 @@ export interface PreparedItemCardPlanningContext {
 		main: readonly MarkdownBlock[];
 		crafting: readonly MarkdownBlock[];
 	}>;
+	manualSegments?: readonly (readonly MarkdownBlock[])[];
 }
 
 export type ItemCardPagePlanner = (
@@ -108,7 +109,10 @@ export function prepareItemCardPlanningContext(
 		)
 		: parseSemanticMarkdown(item.description);
 	const sections = partitionCraftingSection(allBlocks);
-	return { allBlocks, sections };
+	const manualSegments = item.manualRuleSegments && item.manualRuleSegments.length > 1
+		? item.manualRuleSegments.map((segment) => parseSemanticMarkdown(segment))
+		: undefined;
+	return { allBlocks, sections, ...(manualSegments ? { manualSegments } : {}) };
 }
 
 export function createMemoizedItemCardPagePlanner(
@@ -151,6 +155,9 @@ export function planPreparedItemCardPages(
 	context: PreparedItemCardPlanningContext,
 	options: ItemCardPlanOptions = {},
 ): ItemCardPage[] {
+	if (context.manualSegments && context.manualSegments.length > 1) {
+		return planManualCardSegments(item, context, options);
+	}
 	const capacityScale = clampCapacityScale(options.capacityScale ?? 1);
 	const { allBlocks, sections } = context;
 	const artworkAvailable = options.artworkAvailable ?? item.hasImage;
@@ -258,6 +265,67 @@ export function planPreparedItemCardPages(
 			? { artworkOrientation: options.artworkOrientation }
 			: {}),
 		hasUnsplitOverflow: page.hasUnsplitOverflow,
+	}));
+}
+
+function planManualCardSegments(
+	item: ItemCardData,
+	context: PreparedItemCardPlanningContext,
+	options: ItemCardPlanOptions,
+): ItemCardPage[] {
+	const segments = context.manualSegments ?? [];
+	const firstBlocks = segments[0] ?? [];
+	const itemWithoutBreaks: ItemCardData = { ...item };
+	delete itemWithoutBreaks.manualRuleSegments;
+	const firstPages = planPreparedItemCardPages(
+		itemWithoutBreaks,
+		{ allBlocks: firstBlocks, sections: partitionCraftingSection(firstBlocks) },
+		options,
+	);
+	const bodyFontPoints = clampBodyFontPoints(
+		options.bodyFontPoints ?? selectPreferredBodyFontPoints(item.description),
+	);
+	const continuationCapacity = MINIMUM_BODY_CAPACITIES.continuation
+		* (7 / bodyFontPoints)
+		* clampCapacityScale(options.capacityScale ?? 1);
+	const subsequentPages: ItemCardPage[] = [];
+	for (const segment of segments.slice(1)) {
+		const packed = packBlocks(segment, continuationCapacity, false);
+		const pageBlocks = packed.pages.length > 0 ? packed.pages : [[]];
+		const balanceable = pageBlocks.map((blocks) => ({
+			kind: 'continuation' as const,
+			blocks,
+			contentCapacity: continuationCapacity,
+		}));
+		balanceSparseFinalPage(balanceable);
+		for (const [index, page] of balanceable.entries()) {
+			subsequentPages.push({
+				item,
+				pageIndex: 0,
+				pageCount: 0,
+				kind: 'continuation',
+				title: item.name,
+				blocks: page.blocks,
+				layout: 'text',
+				bodyFontPoints,
+				showArtwork: false,
+				showStats: false,
+				showSource: false,
+				...(options.artworkOrientation
+					? { artworkOrientation: options.artworkOrientation }
+					: {}),
+				hasUnsplitOverflow: packed.oversizedPageIndexes.has(index),
+			});
+		}
+	}
+	const combined = [...firstPages, ...subsequentPages];
+	return combined.map((page, pageIndex) => ({
+		...page,
+		item,
+		title: item.name,
+		pageIndex,
+		pageCount: combined.length,
+		showSource: pageIndex === combined.length - 1,
 	}));
 }
 

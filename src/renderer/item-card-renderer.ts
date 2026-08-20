@@ -251,6 +251,20 @@ function buildPageSubtitleLines(page: ItemCardPage): string[] {
 }
 
 export function buildItemIdentityLines(item: ItemCardData): string[] {
+	if (
+		item.typeText !== undefined
+		|| item.rarityText !== undefined
+		|| item.attunementText !== undefined
+	) {
+		const primary = item.typeText?.trim();
+		const metadata = [item.rarityText, item.attunementText]
+			.map((value) => value?.trim())
+			.filter((value): value is string => Boolean(value));
+		return [
+			...(primary ? [primary] : []),
+			...(metadata.length > 0 ? [metadata.join(' · ')] : []),
+		];
+	}
 	if (item.detail) {
 		const detailSegments = splitDetailSegments(item.detail);
 		const primary = detailSegments.shift();

@@ -45,6 +45,10 @@ void test('builds a canonical key from every physical planning input slot', () =
 		'cost',
 		'weight',
 		'rawTags',
+		'typeText',
+		'rarityText',
+		'attunementText',
+		'manualRuleSegments',
 	]);
 	assert.equal(createPhysicalPlanCacheKey(structuredClone(input)), key);
 	assert.equal(
@@ -55,6 +59,8 @@ void test('builds a canonical key from every physical planning input slot', () =
 	const variants: PhysicalPlanCacheKeyInput[] = [
 		{ ...input, sourceFingerprint: 'source-2' },
 		{ ...input, item: { ...input.item, mastery: 'graze' } },
+		{ ...input, item: { ...input.item, typeText: 'Edited weapon' } },
+		{ ...input, item: { ...input.item, manualRuleSegments: ['A', 'B'] } },
 		{
 			...input,
 			artworkFingerprint: { ...input.artworkFingerprint!, modifiedTime: 124 },

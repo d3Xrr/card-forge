@@ -6,6 +6,8 @@ import {
 	PrintQueueService,
 	serializePrintQueue,
 } from '../src/models/print-queue';
+import { applyCardOverrides } from '../src/services/card-overrides';
+import type { ItemCardData } from '../src/models/item';
 
 function createQueue(): PrintQueueService {
 	let nextId = 1;
@@ -61,4 +63,46 @@ void test('serializes defensively and deserializes only valid entries', () => {
 		{ id: '', filePath: 'items/missing-id.md', quantity: 1 },
 		{ id: 'bad', filePath: 'items/bad.md', quantity: 0 },
 	]), [{ id: 'one', filePath: 'items/one.md', quantity: 5 }]);
+});
+
+void test('persists overrides and keeps distinct edited versions of one source item', () => {
+	const queue = createQueue();
+	const source = queue.add('items/sword.md');
+	const edited = queue.add('items/sword.md', { title: 'Named Sword' });
+	queue.add('items/sword.md', { title: ' Named Sword ' });
+	assert.equal(source.quantity, 1);
+	assert.equal(edited.quantity, 2);
+	assert.equal(queue.getEntries().length, 2);
+
+	queue.updateOverrides(source.id, { artwork: { kind: 'none' } });
+	const restored = deserializePrintQueue(serializePrintQueue(queue.getEntries()));
+	assert.deepEqual(restored, queue.getEntries());
+});
+
+void test('resetting queue-entry overrides restores source behavior', () => {
+	const queue = createQueue();
+	const entry = queue.add('items/sword.md', { title: 'Edited' });
+	queue.updateOverrides(entry.id, undefined);
+	assert.equal(queue.getEntries()[0]?.overrides, undefined);
+});
+
+void test('reload reconstructs the same effective data without duplicating the source item', () => {
+	const source: ItemCardData = {
+		filePath: 'items/source.md',
+		name: 'Source',
+		description: 'Rules',
+		hasImage: false,
+		rawTags: [],
+	};
+	const queue = createQueue();
+	queue.add(source.filePath, { title: 'Edited', stats: { damage: '2d6' } });
+	const restored = deserializePrintQueue(queue.serialize());
+	assert.equal(
+		Object.prototype.hasOwnProperty.call(restored[0] ?? {}, 'description'),
+		false,
+	);
+	assert.deepEqual(
+		applyCardOverrides(source, restored[0]?.overrides).item,
+		applyCardOverrides(source, queue.getEntries()[0]?.overrides).item,
+	);
 });

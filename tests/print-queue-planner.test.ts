@@ -100,6 +100,42 @@ void test('preview-approved canonical pages are the same pages consumed by expor
 	));
 });
 
+void test('resolves distinct overridden entries from one source by queue entry id', () => {
+	const source = createItem('sword.md', 'Sword');
+	const fire = { ...source, name: 'Fire Sword' };
+	const frost = { ...source, name: 'Frost Sword' };
+	const entries: PrintQueueEntry[] = [
+		{ id: 'fire', filePath: source.filePath, quantity: 1, overrides: { title: fire.name } },
+		{ id: 'frost', filePath: source.filePath, quantity: 1, overrides: { title: frost.name } },
+	];
+	const resolved = resolvePrintQueue(entries, [source], new Map([
+		['fire', { item: fire, pages: [createPage(fire, 0, 1)], unfitPageIndexes: EMPTY_SET }],
+		['frost', { item: frost, pages: [createPage(frost, 0, 1)], unfitPageIndexes: EMPTY_SET }],
+	]));
+	assert.deepEqual(flattenPrintQueue(resolved).map((card) => card.itemName), [
+		'Fire Sword',
+		'Frost Sword',
+	]);
+});
+
+void test('an applied edited plan immediately changes queue and A4 counts', () => {
+	const source = createItem('long.md', 'Long Item');
+	const entry: PrintQueueEntry = {
+		id: 'edited',
+		filePath: source.filePath,
+		quantity: 2,
+		overrides: { rulesMarkdown: 'Shortened rules.' },
+	};
+	const pages = [createPage(source, 0, 2), createPage(source, 1, 2)];
+	const summary = calculatePrintQueueSummary(resolvePrintQueue(
+		[entry],
+		[source],
+		new Map([[entry.id, { item: source, pages, unfitPageIndexes: EMPTY_SET }]]),
+	));
+	assert.equal(summary.physicalCards, 4);
+	assert.equal(summary.a4Pages, 1);
+});
+
 function createItem(filePath: string, name: string): ItemCardData {
 	return {
 		filePath,

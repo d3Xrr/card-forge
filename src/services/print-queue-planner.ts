@@ -4,6 +4,7 @@ import type { PrintQueueEntry } from '../models/print-queue';
 import { A4_CARDS_PER_SHEET } from '../export/a4-sheet-geometry';
 
 export interface PhysicalItemPlan {
+	item?: ItemCardData;
 	pages: readonly ItemCardPage[];
 	unfitPageIndexes: ReadonlySet<number>;
 	cacheKey?: string;
@@ -48,8 +49,9 @@ export function resolvePrintQueue(
 ): ResolvedPrintQueueEntry[] {
 	const itemsByPath = new Map(items.map((item) => [item.filePath, item]));
 	return entries.map((entry) => {
-		const item = itemsByPath.get(entry.filePath);
-		const plan = plans.get(entry.filePath);
+		const sourceItem = itemsByPath.get(entry.filePath);
+		const plan = plans.get(entry.id) ?? plans.get(entry.filePath);
+		const item = plan?.item ?? sourceItem;
 		return {
 			entry,
 			...(item ? { item } : {}),

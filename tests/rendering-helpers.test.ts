@@ -69,6 +69,20 @@ void test('does not split commas inside identity parentheses', () => {
 	]);
 });
 
+void test('edited identity fields override source detail without changing source parsing', () => {
+	assert.deepEqual(buildItemIdentityLines({
+		filePath: 'items/edited.md',
+		name: 'Edited',
+		description: '',
+		detail: 'Original detail',
+		typeText: 'Custom weapon',
+		rarityText: 'Mythic',
+		attunementText: 'Attunement by a hero',
+		hasImage: false,
+		rawTags: [],
+	}), ['Custom weapon', 'Mythic · Attunement by a hero']);
+});
+
 void test('formats Monsters of Drakkenheim sources for card and browser', () => {
 	const sourceText = 'Monsters of Drakkenheim p. 395';
 	assert.equal(
