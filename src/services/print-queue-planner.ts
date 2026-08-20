@@ -28,6 +28,7 @@ export interface ResolvedPrintQueueEntry {
 export interface PhysicalQueueCard {
 	queueEntryId: string;
 	filePath: string;
+	physicalPlanKey?: string;
 	itemName: string;
 	copyIndex: number;
 	pageIndex: number;
@@ -52,7 +53,7 @@ export function resolvePrintQueue(
 	const itemsByPath = new Map(items.map((item) => [item.filePath, item]));
 	return entries.map((entry) => {
 		const sourceItem = itemsByPath.get(entry.filePath);
-		const plan = plans.get(entry.id) ?? plans.get(entry.filePath);
+		const plan = plans.get(entry.id);
 		const item = plan?.item ?? sourceItem;
 		return {
 			entry,
@@ -87,6 +88,9 @@ export function flattenPrintQueue(
 				flattened.push({
 					queueEntryId: resolved.entry.id,
 					filePath: resolved.entry.filePath,
+					...(resolved.cacheKey
+						? { physicalPlanKey: resolved.cacheKey }
+						: {}),
 					itemName: resolved.item.name,
 					copyIndex,
 					pageIndex: page.pageIndex,

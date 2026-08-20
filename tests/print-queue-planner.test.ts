@@ -4,6 +4,8 @@ import test from 'node:test';
 import type { ItemCardData } from '../src/models/item';
 import type { ItemCardPage } from '../src/models/item-card-page';
 import type { PrintQueueEntry } from '../src/models/print-queue';
+import { paginatePhysicalCards } from '../src/export/a4-sheet-geometry';
+import { createRasterCacheKey } from '../src/export/card-raster-identity';
 import {
 	calculatePrintQueueSummary,
 	flattenPrintQueue,
@@ -29,8 +31,8 @@ void test('flattens queue order, copy order, then continuation page order', () =
 		{ id: 'rod', filePath: rod.filePath, quantity: 3 },
 	];
 	const plans = new Map<string, PhysicalItemPlan>([
-		[scimitar.filePath, { pages: [createPage(scimitar, 0, 1)], unfitPageIndexes: EMPTY_SET }],
-		[rod.filePath, { pages: [createPage(rod, 0, 2), createPage(rod, 1, 2)], unfitPageIndexes: EMPTY_SET }],
+		['scimitar', { pages: [createPage(scimitar, 0, 1)], unfitPageIndexes: EMPTY_SET }],
+		['rod', { pages: [createPage(rod, 0, 2), createPage(rod, 1, 2)], unfitPageIndexes: EMPTY_SET }],
 	]);
 	const flattened = flattenPrintQueue(resolvePrintQueue(entries, [scimitar, rod], plans));
 	assert.deepEqual(flattened.map((card) => `${card.itemName}:${card.copyIndex + 1}:${card.pageIndex + 1}`), [
@@ -58,7 +60,7 @@ void test('calculates unique types, copies, physical cards, A4 pages, and missin
 	const summary = calculatePrintQueueSummary(resolvePrintQueue(
 		entries,
 		[item],
-		new Map([[item.filePath, plan]]),
+		new Map([['rod', plan]]),
 	));
 	assert.deepEqual(summary, {
 		itemTypes: 2,
@@ -79,7 +81,7 @@ void test('preview-approved canonical pages are the same pages consumed by expor
 	const resolved = resolvePrintQueue(
 		[{ id: 'apparatus', filePath: item.filePath, quantity: 1 }],
 		[item],
-		new Map([[item.filePath, {
+		new Map([['apparatus', {
 			pages,
 			unfitPageIndexes: EMPTY_SET,
 			cacheKey: 'effective-apparatus-v1',
@@ -136,6 +138,106 @@ void test('an applied edited plan immediately changes queue and A4 counts', () =
 	assert.equal(summary.a4Pages, 1);
 });
 
+void test('same-source entries retain entry-specific pages through quantity and A4 materialization', () => {
+	const source = createItem('synthetic-source.md', 'Synthetic Quarterstaff');
+	const firstItem = { ...source, description: 'Rules AAA' };
+	const secondItem = { ...source, description: 'Rules BBB' };
+	const entries: PrintQueueEntry[] = [
+		{ id: 'quarterstaff-a', filePath: source.filePath, quantity: 2, overrides: { rulesMarkdown: 'Rules AAA' } },
+		{ id: 'quarterstaff-b', filePath: source.filePath, quantity: 1, overrides: { rulesMarkdown: 'Rules BBB' } },
+	];
+	const firstPages = [
+		createMarkedPage(firstItem, 0, 2, 'AAA-1'),
+		createMarkedPage(firstItem, 1, 2, 'AAA-2'),
+	];
+	const secondPages = [
+		createMarkedPage(secondItem, 0, 2, 'BBB-1'),
+		createMarkedPage(secondItem, 1, 2, 'BBB-2'),
+	];
+	const resolved = resolvePrintQueue(entries, [source], new Map([
+		['quarterstaff-a', {
+			item: firstItem,
+			pages: firstPages,
+			unfitPageIndexes: EMPTY_SET,
+			cacheKey: 'exact-plan-a',
+			artworkResourcePath: 'app://art/a.webp',
+			artworkRevisionFingerprint: 'art-a-v1',
+		}],
+		['quarterstaff-b', {
+			item: secondItem,
+			pages: secondPages,
+			unfitPageIndexes: EMPTY_SET,
+			cacheKey: 'exact-plan-b',
+			artworkResourcePath: 'app://art/b.webp',
+			artworkRevisionFingerprint: 'art-b-v1',
+		}],
+	]));
+	const flattened = flattenPrintQueue(resolved);
+	const expected = ['AAA-1', 'AAA-2', 'AAA-1', 'AAA-2', 'BBB-1', 'BBB-2'];
+
+	assert.deepEqual(flattened.map(getPageMarker), expected);
+	assert.deepEqual(flattened.map((card) => card.queueEntryId), [
+		'quarterstaff-a',
+		'quarterstaff-a',
+		'quarterstaff-a',
+		'quarterstaff-a',
+		'quarterstaff-b',
+		'quarterstaff-b',
+	]);
+	assert.deepEqual(flattened.map((card) => card.physicalPlanKey), [
+		'exact-plan-a',
+		'exact-plan-a',
+		'exact-plan-a',
+		'exact-plan-a',
+		'exact-plan-b',
+		'exact-plan-b',
+	]);
+	assert.deepEqual(paginatePhysicalCards(flattened)[0]?.map(getPageMarker), expected);
+	assert.strictEqual(flattened[0]?.page, firstPages[0]);
+	assert.strictEqual(flattened[4]?.page, secondPages[0]);
+	const rasterKeys = flattened.map((card) => createRasterCacheKey({
+		page: card.page,
+		...(card.physicalPlanKey
+			? { physicalPlanKey: card.physicalPlanKey }
+			: {}),
+		...(card.artworkResourcePath
+			? { artworkResourcePath: card.artworkResourcePath }
+			: {}),
+		...(card.artworkRevisionFingerprint
+			? { artworkRevisionFingerprint: card.artworkRevisionFingerprint }
+			: {}),
+	}));
+	assert.equal(rasterKeys[0], rasterKeys[2], 'identical A1 copies reuse raster identity');
+	assert.notEqual(rasterKeys[0], rasterKeys[4], 'entry B keeps distinct raster identity');
+});
+
+void test('same-source Dagger, Quarterstaff, and Warhammer plans stay isolated by entry id', () => {
+	const source = createItem('plus-one-weapon.md', 'Synthetic +1 Weapon');
+	const names = ['Synthetic Dagger', 'Synthetic Quarterstaff', 'Synthetic Warhammer'];
+	const entries = names.map((name, index) => ({
+		id: `variant-${index}`,
+		filePath: source.filePath,
+		quantity: 1,
+		overrides: { variant: { id: name } },
+	}));
+	const plans = new Map<string, PhysicalItemPlan>(entries.map((entry, index) => {
+		const item = { ...source, name: names[index]! };
+		return [entry.id, {
+			item,
+			pages: [createPage(item, 0, 1)],
+			unfitPageIndexes: EMPTY_SET,
+			cacheKey: `variant-plan-${index}`,
+		}];
+	}));
+	const flattened = flattenPrintQueue(resolvePrintQueue(entries, [source], plans));
+	assert.deepEqual(flattened.map((card) => card.itemName), names);
+	assert.deepEqual(flattened.map((card) => card.physicalPlanKey), [
+		'variant-plan-0',
+		'variant-plan-1',
+		'variant-plan-2',
+	]);
+});
+
 function createItem(filePath: string, name: string): ItemCardData {
 	return {
 		filePath,
@@ -160,4 +262,21 @@ function createPage(item: ItemCardData, pageIndex: number, pageCount: number): I
 		showSource: pageIndex === pageCount - 1,
 		hasUnsplitOverflow: false,
 	};
+}
+
+function createMarkedPage(
+	item: ItemCardData,
+	pageIndex: number,
+	pageCount: number,
+	marker: string,
+): ItemCardPage {
+	return {
+		...createPage(item, pageIndex, pageCount),
+		blocks: [{ type: 'paragraph', markdown: marker }],
+	};
+}
+
+function getPageMarker(card: { page: ItemCardPage }): string {
+	const block = card.page.blocks[0];
+	return block?.type === 'paragraph' ? block.markdown : '';
 }

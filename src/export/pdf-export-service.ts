@@ -9,6 +9,7 @@ import {
 import type { ItemCardRenderer } from '../renderer/item-card-renderer';
 import { A4_CARDS_PER_SHEET } from './a4-sheet-geometry';
 import { CardRasterizer } from './card-rasterizer';
+import { createRasterCacheKey } from './card-raster-identity';
 import { assembleA4CardPdf, type RasterizedPhysicalCard } from './pdf-assembler';
 import { savePdfToVault } from './vault-pdf-storage';
 
@@ -65,18 +66,30 @@ export class PdfExportService {
 		const rasterCache = new Map<string, Uint8Array>();
 		const rasterizedCards: RasterizedPhysicalCard[] = [];
 		for (const [index, card] of physicalCards.entries()) {
-			const cacheKey = createRasterCacheKey(card.filePath, card.pageIndex);
+			const artwork = card.artworkResourcePath
+				? undefined
+				: resolveArtworkDescriptor(this.app, card.page.item);
+			const artworkResourcePath = card.artworkResourcePath
+				?? artwork?.resourcePath;
+			const artworkRevisionFingerprint = card.artworkRevisionFingerprint
+				?? artwork?.revisionFingerprint;
+			const cacheKey = createRasterCacheKey({
+				page: card.page,
+				...(card.physicalPlanKey
+					? { physicalPlanKey: card.physicalPlanKey }
+					: {}),
+				...(artworkResourcePath ? { artworkResourcePath } : {}),
+				...(artworkRevisionFingerprint
+					? { artworkRevisionFingerprint }
+					: {}),
+			});
 			let pngBytes = rasterCache.get(cacheKey);
 			if (!pngBytes) {
-				const artwork = card.artworkResourcePath
-					? undefined
-					: resolveArtworkDescriptor(this.app, card.page.item);
 				pngBytes = await this.rasterizer.rasterize(
 					document,
 					card.page,
-					card.artworkResourcePath ?? artwork?.resourcePath,
-					card.artworkRevisionFingerprint
-						?? artwork?.revisionFingerprint,
+					artworkResourcePath,
+					artworkRevisionFingerprint,
 				);
 				rasterCache.set(cacheKey, pngBytes);
 			}
@@ -103,10 +116,6 @@ export class PdfExportService {
 			rasterizedPageCount: rasterCache.size,
 		};
 	}
-}
-
-export function createRasterCacheKey(filePath: string, pageIndex: number): string {
-	return `${filePath}\u0000${pageIndex}\u0000physical-v1`;
 }
 
 async function yieldToUi(): Promise<void> {

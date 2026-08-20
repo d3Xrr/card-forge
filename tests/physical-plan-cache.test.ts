@@ -107,6 +107,33 @@ void test('deduplicates concurrent work and exposes the completed plan', async (
 	assert.equal(calls, 1);
 });
 
+void test('same source with distinct effective overrides cannot share a physical plan', async () => {
+	const cache = new PhysicalPlanCache<string>();
+	const baseline = createKeyInput('items/shared.md', 'source-shared');
+	const first = createPhysicalPlanCacheIdentity({
+		...baseline,
+		item: { ...baseline.item, description: 'Rules AAA' },
+		overrideFingerprint: 'override-aaa',
+	});
+	const second = createPhysicalPlanCacheIdentity({
+		...baseline,
+		item: { ...baseline.item, description: 'Rules BBB' },
+		overrideFingerprint: 'override-bbb',
+	});
+	let calls = 0;
+	assert.notEqual(first.key, second.key);
+	assert.equal(await cache.getOrCreate(first, () => {
+		calls += 1;
+		return 'plan-aaa';
+	}), 'plan-aaa');
+	assert.equal(await cache.getOrCreate(second, () => {
+		calls += 1;
+		return 'plan-bbb';
+	}), 'plan-bbb');
+	assert.equal(await cache.getOrCreate(first, () => 'wrong'), 'plan-aaa');
+	assert.equal(calls, 2);
+});
+
 void test('fingerprints raw source revisions without retaining source text', () => {
 	const first = createSourceContentFingerprint('Private source rules.', 100, 21);
 	assert.equal(

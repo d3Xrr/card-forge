@@ -101,37 +101,40 @@ export class LatestRequestGate<TKey> {
 }
 
 /**
- * Resolves one plan per unique queue item, retaining warm plans across quantity
- * and ordering changes. The lookup is invoked only for missing item plans.
+ * Resolves one plan per stable queue entry, retaining warm plans across
+ * quantity and ordering changes. Same-source entries may have different
+ * effective overrides, so source paths are never used as plan-map identity.
  */
 export async function resolveQueuePlanMap<TPlan>(
-	entries: readonly { filePath: string }[],
+	entries: readonly { id: string; filePath: string }[],
 	warmPlans: ReadonlyMap<string, TPlan>,
-	lookupPlan: (filePath: string) => Promise<TPlan>,
+	lookupPlan: (entry: { id: string; filePath: string }) => Promise<TPlan>,
 	shouldContinue: () => boolean = () => true,
 ): Promise<Map<string, TPlan>> {
-	const uniquePaths = [...new Set(entries.map((entry) => entry.filePath))];
 	const resolved = new Map<string, TPlan>();
-	for (const filePath of uniquePaths) {
-		if (warmPlans.has(filePath)) {
-			resolved.set(filePath, warmPlans.get(filePath) as TPlan);
+	for (const entry of entries) {
+		if (resolved.has(entry.id)) {
+			continue;
+		}
+		if (warmPlans.has(entry.id)) {
+			resolved.set(entry.id, warmPlans.get(entry.id) as TPlan);
 			continue;
 		}
 		if (!shouldContinue()) {
 			break;
 		}
-		resolved.set(filePath, await lookupPlan(filePath));
+		resolved.set(entry.id, await lookupPlan(entry));
 	}
 	return resolved;
 }
 
 /** Verifies materialized queue plans against freshly computed effective keys. */
 export function areQueuePlanInputsCurrent(
-	plans: readonly { filePath: string; cacheKey?: string }[],
-	getCurrentKey: (filePath: string) => string | undefined,
+	plans: readonly { entryId: string; cacheKey?: string }[],
+	getCurrentKey: (entryId: string) => string | undefined,
 ): boolean {
 	return plans.every((plan) =>
 		plan.cacheKey !== undefined
-		&& getCurrentKey(plan.filePath) === plan.cacheKey,
+		&& getCurrentKey(plan.entryId) === plan.cacheKey,
 	);
 }

@@ -8,6 +8,7 @@ import {
 } from '../src/models/print-queue';
 import { applyCardOverrides } from '../src/services/card-overrides';
 import type { ItemCardData } from '../src/models/item';
+import type { CardOverrides } from '../src/models/card-overrides';
 
 function createQueue(): PrintQueueService {
 	let nextId = 1;
@@ -135,4 +136,85 @@ void test('queue reset remains a working draft until Save and other entries stay
 		queue.getEntries().find((entry) => entry.id === second.id)?.overrides,
 		{ title: 'Second edit' },
 	);
+});
+
+void test('same source keeps every semantically distinct printable override independent', () => {
+	const queue = createQueue();
+	const filePath = 'items/synthetic-source.md';
+	const rulesA = queue.add(filePath, { rulesMarkdown: 'VERSION A' });
+	queue.add(filePath, { rulesMarkdown: ' VERSION A ' });
+	queue.add(filePath, { rulesMarkdown: 'VERSION B' });
+	queue.add(filePath, { artwork: { kind: 'vault', path: 'art/a.webp' } });
+	queue.add(filePath, { artwork: { kind: 'vault', path: 'art/b.webp' } });
+	queue.add(filePath, { variant: { id: 'dagger' } });
+	queue.add(filePath, { variant: { id: 'warhammer' } });
+	queue.add(filePath, { sourceText: 'Literal source A' });
+	queue.add(filePath, { sourceText: 'Literal source B' });
+
+	assert.equal(rulesA.quantity, 2);
+	assert.equal(queue.getEntries().length, 8);
+	assert.equal(new Set(queue.getEntries().map((entry) => entry.id)).size, 8);
+});
+
+void test('draft mutation, saving, resetting, and removing entry A never changes B', () => {
+	const queue = createQueue();
+	const originalDraft: CardOverrides = {
+		rulesMarkdown: 'VERSION A',
+		stats: { properties: ['versatile'] },
+		artwork: { kind: 'vault', path: 'art/a.webp' },
+	};
+	const first = queue.add('items/synthetic-source.md', originalDraft);
+	const second = queue.add('items/synthetic-source.md', {
+		rulesMarkdown: 'VERSION B',
+		stats: { properties: ['heavy'] },
+		artwork: { kind: 'vault', path: 'art/b.webp' },
+	});
+	const secondSnapshot = structuredClone(second.overrides);
+
+	originalDraft.rulesMarkdown = 'MUTATED OUTSIDE QUEUE';
+	originalDraft.stats?.properties?.push('outside');
+	if (originalDraft.artwork?.kind === 'vault') {
+		originalDraft.artwork.path = 'art/outside.webp';
+	}
+	assert.equal(queue.getEntries().find((entry) => entry.id === first.id)?.overrides?.rulesMarkdown, 'VERSION A');
+
+	const workingDraft = structuredClone(first.overrides);
+	if (workingDraft) {
+		workingDraft.rulesMarkdown = 'VERSION C';
+	}
+	assert.equal(queue.getEntries().find((entry) => entry.id === first.id)?.overrides?.rulesMarkdown, 'VERSION A');
+	queue.updateOverrides(first.id, workingDraft);
+	assert.equal(queue.getEntries().find((entry) => entry.id === first.id)?.overrides?.rulesMarkdown, 'VERSION C');
+	assert.deepEqual(queue.getEntries().find((entry) => entry.id === second.id)?.overrides, secondSnapshot);
+
+	queue.updateOverrides(first.id, undefined);
+	assert.equal(queue.getEntries().find((entry) => entry.id === first.id)?.overrides, undefined);
+	assert.deepEqual(queue.getEntries().find((entry) => entry.id === second.id)?.overrides, secondSnapshot);
+	queue.remove(first.id);
+	assert.deepEqual(queue.getEntries(), [{
+		id: second.id,
+		filePath: second.filePath,
+		quantity: 1,
+		overrides: secondSnapshot,
+	}]);
+});
+
+void test('persistence retains same-source entry ids and distinct override snapshots', () => {
+	const queue = createQueue();
+	const first = queue.add('items/synthetic-source.md', {
+		rulesMarkdown: 'VERSION A',
+		variant: { id: 'quarterstaff' },
+		artwork: { kind: 'temporary', id: 'session-a', origin: 'https' },
+	});
+	const second = queue.add('items/synthetic-source.md', {
+		rulesMarkdown: 'VERSION B',
+		variant: { id: 'quarterstaff' },
+		artwork: { kind: 'vault', path: 'art/b.webp' },
+		sourceText: 'Literal source B',
+	});
+	const restored = deserializePrintQueue(queue.serialize());
+
+	assert.deepEqual(restored.map((entry) => entry.id), [first.id, second.id]);
+	assert.deepEqual(restored, queue.getEntries());
+	assert.notStrictEqual(restored[0]?.overrides, restored[1]?.overrides);
 });

@@ -52,7 +52,7 @@ Each PDF page is exact A4 landscape (297 × 210 mm). Cards are placed row-major 
 
 Each card is drawn at exactly 63.5 × 88.9 mm. The grid uses 3 mm gaps, 17 mm left/right margins, and 14.6 mm top/bottom margins. A partial final sheet uses the same positions instead of being recentered.
 
-Card DOM is rasterized locally to a lossless 750 × 1050 PNG, then embedded with `pdf-lib`. Duplicate copies reuse the same in-memory raster during one export. No raster cache is persisted between Obsidian sessions.
+Card DOM is rasterized locally to a lossless 750 × 1050 PNG, then embedded with `pdf-lib`. Canonically equivalent physical pages reuse the same in-memory raster during one export; distinct queue-entry content and artwork retain separate raster identity. No raster cache is persisted between Obsidian sessions.
 
 ## Settings
 
@@ -60,6 +60,10 @@ Card DOM is rasterized locally to a lossless 750 × 1050 PNG, then embedded with
 - **PDF export folder** — vault-relative output folder; default `Card Forge Exports`.
 - **Show crop marks** — enabled by default.
 - **Open PDF after export** — disabled by default.
+
+## Backlog
+
+Deferred, non-release-blocking ideas are documented in [BACKLOG.md](BACKLOG.md). They are planning notes only and are not part of Phase 4B / 0.4.0.
 
 ## Development
 

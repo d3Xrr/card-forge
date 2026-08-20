@@ -89,13 +89,13 @@ void test('queue quantity and ordering changes reuse warm plans without planner 
 		filePath: string;
 	}
 	let plannerCalls = 0;
-	const lookupPlan = (filePath: string): Promise<TestPlan> => {
+	const lookupPlan = (entry: { filePath: string }): Promise<TestPlan> => {
 		plannerCalls += 1;
-		return Promise.resolve({ filePath });
+		return Promise.resolve({ filePath: entry.filePath });
 	};
 	const initialEntries = [
-		{ filePath: 'items/scimitar.md', quantity: 1 },
-		{ filePath: 'items/rod.md', quantity: 1 },
+		{ id: 'scimitar', filePath: 'items/scimitar.md', quantity: 1 },
+		{ id: 'rod', filePath: 'items/rod.md', quantity: 1 },
 	];
 	const coldPlans = await resolveQueuePlanMap(
 		initialEntries,
@@ -105,9 +105,9 @@ void test('queue quantity and ordering changes reuse warm plans without planner 
 	assert.equal(plannerCalls, 2);
 
 	const reorderedWithNewQuantities = [
-		{ filePath: 'items/rod.md', quantity: 4 },
-		{ filePath: 'items/scimitar.md', quantity: 2 },
-		{ filePath: 'items/rod.md', quantity: 4 },
+		{ id: 'rod', filePath: 'items/rod.md', quantity: 4 },
+		{ id: 'scimitar', filePath: 'items/scimitar.md', quantity: 2 },
+		{ id: 'rod', filePath: 'items/rod.md', quantity: 4 },
 	];
 	const warmPlans = await resolveQueuePlanMap(
 		reorderedWithNewQuantities,
@@ -116,9 +116,29 @@ void test('queue quantity and ordering changes reuse warm plans without planner 
 	);
 
 	assert.equal(plannerCalls, 2, 'warm queue changes made zero additional planner calls');
-	assert.deepEqual([...warmPlans.keys()], ['items/rod.md', 'items/scimitar.md']);
-	assert.strictEqual(warmPlans.get('items/rod.md'), coldPlans.get('items/rod.md'));
-	assert.strictEqual(warmPlans.get('items/scimitar.md'), coldPlans.get('items/scimitar.md'));
+	assert.deepEqual([...warmPlans.keys()], ['rod', 'scimitar']);
+	assert.strictEqual(warmPlans.get('rod'), coldPlans.get('rod'));
+	assert.strictEqual(warmPlans.get('scimitar'), coldPlans.get('scimitar'));
+});
+
+void test('same-source queue entries resolve separate effective plans by entry id', async () => {
+	let calls = 0;
+	const plans = await resolveQueuePlanMap(
+		[
+			{ id: 'quarterstaff-a', filePath: 'items/plus-one-weapon.md' },
+			{ id: 'quarterstaff-b', filePath: 'items/plus-one-weapon.md' },
+		],
+		new Map(),
+		async (entry) => {
+			calls += 1;
+			return `${entry.id}-plan`;
+		},
+	);
+	assert.equal(calls, 2);
+	assert.deepEqual([...plans], [
+		['quarterstaff-a', 'quarterstaff-a-plan'],
+		['quarterstaff-b', 'quarterstaff-b-plan'],
+	]);
 });
 
 void test('cold queue plans resolve sequentially to bound hidden measurement work', async () => {
@@ -126,16 +146,16 @@ void test('cold queue plans resolve sequentially to bound hidden measurement wor
 	let maximumActive = 0;
 	const order: string[] = [];
 	await resolveQueuePlanMap(
-		[{ filePath: 'A' }, { filePath: 'B' }, { filePath: 'C' }],
+		[{ id: 'A', filePath: 'A' }, { id: 'B', filePath: 'B' }, { id: 'C', filePath: 'C' }],
 		new Map(),
-		async (filePath) => {
+		async (entry) => {
 			active += 1;
 			maximumActive = Math.max(maximumActive, active);
-			order.push(`start-${filePath}`);
+			order.push(`start-${entry.filePath}`);
 			await Promise.resolve();
-			order.push(`finish-${filePath}`);
+			order.push(`finish-${entry.filePath}`);
 			active -= 1;
-			return filePath;
+			return entry.filePath;
 		},
 	);
 
@@ -152,11 +172,13 @@ void test('stale queue resolution does not start new cold work', async () => {
 	const calls: string[] = [];
 	let current = true;
 	const pending = resolveQueuePlanMap(
-		[{ filePath: 'A' }, { filePath: 'B' }, { filePath: 'C' }],
+		[{ id: 'A', filePath: 'A' }, { id: 'B', filePath: 'B' }, { id: 'C', filePath: 'C' }],
 		new Map(),
-		(filePath) => {
-			calls.push(filePath);
-			return filePath === 'A' ? first.promise : Promise.resolve(filePath);
+		(entry) => {
+			calls.push(entry.filePath);
+			return entry.filePath === 'A'
+				? first.promise
+				: Promise.resolve(entry.filePath);
 		},
 		() => current,
 	);
@@ -171,25 +193,25 @@ void test('stale queue resolution does not start new cold work', async () => {
 
 void test('queue export freshness compares the effective source and artwork key', () => {
 	const plans = [
-		{ filePath: 'items/axe.md', cacheKey: 'axe-source-art-v1' },
-		{ filePath: 'items/rod.md', cacheKey: 'rod-source-v1' },
+		{ entryId: 'axe', cacheKey: 'axe-source-art-v1' },
+		{ entryId: 'rod', cacheKey: 'rod-source-v1' },
 	];
 	const current = new Map([
-		['items/axe.md', 'axe-source-art-v1'],
-		['items/rod.md', 'rod-source-v1'],
+		['axe', 'axe-source-art-v1'],
+		['rod', 'rod-source-v1'],
 	]);
 	assert.equal(
-		areQueuePlanInputsCurrent(plans, (filePath) => current.get(filePath)),
+		areQueuePlanInputsCurrent(plans, (entryId) => current.get(entryId)),
 		true,
 	);
-	current.set('items/axe.md', 'axe-source-art-v2');
+	current.set('axe', 'axe-source-art-v2');
 	assert.equal(
-		areQueuePlanInputsCurrent(plans, (filePath) => current.get(filePath)),
+		areQueuePlanInputsCurrent(plans, (entryId) => current.get(entryId)),
 		false,
 	);
 	assert.equal(
 		areQueuePlanInputsCurrent(
-			[{ filePath: 'items/missing-key.md' }],
+			[{ entryId: 'missing-key' }],
 			() => undefined,
 		),
 		false,
