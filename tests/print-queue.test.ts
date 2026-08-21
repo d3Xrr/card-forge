@@ -3,10 +3,13 @@ import test from 'node:test';
 
 import {
 	deserializePrintQueue,
+	getUniqueQueueEntryById,
 	PrintQueueService,
 	serializePrintQueue,
 } from '../src/models/print-queue';
 import { applyCardOverrides } from '../src/services/card-overrides';
+import { createEffectiveCardInput } from '../src/services/effective-card';
+import { TemporaryArtworkStore } from '../src/services/temporary-artwork-store';
 import type { ItemCardData } from '../src/models/item';
 import type { CardOverrides } from '../src/models/card-overrides';
 
@@ -58,12 +61,16 @@ void test('serializes defensively and deserializes only valid entries', () => {
 	const serialized = serializePrintQueue(original);
 	serialized[0]!.quantity = 4;
 	assert.equal(original[0]?.quantity, 2);
+	let nextId = 1;
 	assert.deepEqual(deserializePrintQueue([
 		...original,
 		{ id: 'two', filePath: 'items/one.md', quantity: 3 },
 		{ id: '', filePath: 'items/missing-id.md', quantity: 1 },
 		{ id: 'bad', filePath: 'items/bad.md', quantity: 0 },
-	]), [{ id: 'one', filePath: 'items/one.md', quantity: 5 }]);
+	], () => `migrated-${nextId++}`), [
+		{ id: 'one', filePath: 'items/one.md', quantity: 5 },
+		{ id: 'migrated-1', filePath: 'items/missing-id.md', quantity: 1 },
+	]);
 });
 
 void test('persists overrides and keeps distinct edited versions of one source item', () => {
@@ -212,9 +219,218 @@ void test('persistence retains same-source entry ids and distinct override snaps
 		artwork: { kind: 'vault', path: 'art/b.webp' },
 		sourceText: 'Literal source B',
 	});
-	const restored = deserializePrintQueue(queue.serialize());
+	const restoredQueue = new PrintQueueService(
+		JSON.parse(JSON.stringify(queue.serialize())) as unknown,
+		() => 'unused-migration-id',
+	);
+	const restored = restoredQueue.getEntries();
 
 	assert.deepEqual(restored.map((entry) => entry.id), [first.id, second.id]);
 	assert.deepEqual(restored, queue.getEntries());
 	assert.notStrictEqual(restored[0]?.overrides, restored[1]?.overrides);
+	restoredQueue.updateOverrides(first.id, {
+		...restored[0]?.overrides,
+		rulesMarkdown: 'VERSION C',
+	});
+	assert.equal(restoredQueue.getEntry(first.id)?.overrides?.rulesMarkdown, 'VERSION C');
+	assert.equal(restoredQueue.getEntry(second.id)?.overrides?.rulesMarkdown, 'VERSION B');
 });
+
+void test('missing legacy queue ids are migrated, serialized, and remain stable', () => {
+	let nextId = 1;
+	const queue = new PrintQueueService([
+		{
+			filePath: 'sword-source.md',
+			overrides: { title: 'Sword of Khaine', stats: { cost: '15000 gp' } },
+		},
+		{ filePath: 'armor-source.md' },
+		{ filePath: 'wand-source.md', quantity: 2 },
+	], () => `migrated-${nextId++}`);
+
+	assert.equal(queue.hydrationRepaired, true);
+	assert.deepEqual(queue.getEntries().map((entry) => entry.id), [
+		'migrated-1',
+		'migrated-2',
+		'migrated-3',
+	]);
+	assert.deepEqual(queue.getEntries().map((entry) => entry.quantity), [1, 1, 2]);
+	assert.equal(new Set(queue.getEntries().map((entry) => entry.id)).size, 3);
+
+	const serialized = queue.serialize();
+	const restored = new PrintQueueService(serialized, () => 'must-not-be-used');
+	assert.equal(restored.hydrationRepaired, false);
+	assert.deepEqual(restored.getEntries().map((entry) => entry.id), [
+		'migrated-1',
+		'migrated-2',
+		'migrated-3',
+	]);
+	assert.equal(restored.updateOverrides('migrated-1', { title: 'Edited Sword' }), true);
+	assert.equal(restored.getEntry('migrated-2')?.overrides, undefined);
+	assert.equal(restored.getEntry('migrated-3')?.overrides, undefined);
+});
+
+void test('duplicate persisted queue ids are repaired without mixing snapshots', () => {
+	const queue = new PrintQueueService([
+		{
+			id: 'same',
+			filePath: 'sword-source.md',
+			quantity: 1,
+			overrides: { title: 'Sword of Khaine', stats: { cost: '15000 gp' } },
+		},
+		{
+			id: 'same',
+			filePath: 'armor-source.md',
+			quantity: 1,
+			overrides: { sourceText: 'Armor source' },
+		},
+		{
+			id: 'same',
+			filePath: 'wand-source.md',
+			quantity: 1,
+			overrides: { rulesMarkdown: 'Wand custom rules' },
+		},
+	], () => 'repair');
+	const [sword, armor, wand] = queue.getEntries();
+
+	assert.equal(queue.hydrationRepaired, true);
+	assert.deepEqual(queue.getEntries().map((entry) => entry.id), ['same', 'repair', 'repair-2']);
+	assert.notStrictEqual(sword, armor);
+	assert.notStrictEqual(sword, wand);
+	assert.notStrictEqual(armor, wand);
+	assert.notStrictEqual(sword?.overrides, armor?.overrides);
+	assert.notStrictEqual(sword?.overrides, wand?.overrides);
+	assert.notStrictEqual(armor?.overrides, wand?.overrides);
+	assert.equal(queue.updateOverrides('same', { title: 'Edited Sword' }), true);
+	assert.deepEqual(queue.getEntry('repair')?.overrides, { sourceText: 'Armor source' });
+	assert.deepEqual(queue.getEntry('repair-2')?.overrides, { rulesMarkdown: 'Wand custom rules' });
+});
+
+void test('legacy id repair preserves valid ids that appear later in persisted order', () => {
+	const queue = new PrintQueueService([
+		{ filePath: 'missing-id.md', quantity: 1 },
+		{ id: 'reserved', filePath: 'valid-id.md', quantity: 1 },
+	], () => 'reserved');
+
+	assert.deepEqual(queue.getEntries().map((entry) => entry.id), ['reserved-2', 'reserved']);
+});
+
+void test('ambiguous runtime ids fail safely instead of updating any entry', () => {
+	const queue = createQueue();
+	const sword = queue.add('sword-source.md', { title: 'Sword' });
+	const armor = queue.add('armor-source.md', { title: 'Armor' });
+	const before = structuredClone(queue.getEntries());
+	armor.id = sword.id;
+	before[1]!.id = sword.id;
+
+	assert.equal(getUniqueQueueEntryById(queue.getEntries(), sword.id), undefined);
+	assert.equal(queue.updateOverrides(sword.id, { title: 'Contaminated' }), false);
+	assert.deepEqual(queue.getEntries(), before);
+});
+
+void test('different-source queue cards stay isolated after reload with missing temporary artwork', () => {
+	assertDifferentSourceQueueIsolation({
+		kind: 'temporary',
+		id: 'missing-session-sword-art',
+		name: 'sword.png',
+		origin: 'local',
+	});
+});
+
+void test('different-source queue cards stay isolated after reload with persistent artwork', () => {
+	assertDifferentSourceQueueIsolation({ kind: 'vault', path: 'Card Forge Assets/sword.webp' });
+});
+
+function assertDifferentSourceQueueIsolation(
+	artwork: NonNullable<CardOverrides['artwork']>,
+): void {
+	const items: ItemCardData[] = [
+		{
+			filePath: 'sword-source.md',
+			name: 'Longsword',
+			description: 'Sword rules',
+			weight: 3,
+			hasImage: false,
+			rawTags: [],
+		},
+		{
+			filePath: 'armor-source.md',
+			name: 'Armor of Invulnerability',
+			description: 'Armor rules',
+			weight: 65,
+			imagePath: 'armor.webp',
+			hasImage: true,
+			rawTags: [],
+		},
+		{
+			filePath: 'wand-source.md',
+			name: 'Wand of the Precocious Apprentice',
+			description: 'Wand rules',
+			imagePath: 'wand.webp',
+			hasImage: true,
+			rawTags: [],
+		},
+	];
+	const queue = new PrintQueueService([
+		{
+			id: 'sword-id',
+			filePath: 'sword-source.md',
+			quantity: 1,
+			overrides: {
+				title: 'Sword of Khaine',
+				stats: { cost: '15000 gp' },
+				sourceText: 'Homebrew',
+				artwork,
+			},
+		},
+		{ id: 'armor-id', filePath: 'armor-source.md', quantity: 1 },
+		{ id: 'wand-id', filePath: 'wand-source.md', quantity: 1 },
+	]);
+	assert.deepEqual(queue.getEntries().map((entry) => entry.id), [
+		'sword-id',
+		'armor-id',
+		'wand-id',
+	]);
+	if (artwork.kind === 'temporary') {
+		const restartedArtworkStore = new TemporaryArtworkStore();
+		assert.equal(restartedArtworkStore.get(artwork.id), undefined);
+	}
+	const restored = new PrintQueueService(
+		JSON.parse(JSON.stringify(queue.serialize())) as unknown,
+		() => 'must-not-be-used',
+	);
+	const ids = restored.getEntries().map((entry) => entry.id);
+	assert.deepEqual(ids, ['sword-id', 'armor-id', 'wand-id']);
+	assert.equal(new Set(ids).size, 3);
+
+	const swordDraft = structuredClone(restored.getEntry('sword-id')?.overrides);
+	assert.ok(swordDraft);
+	swordDraft.stats = { ...swordDraft.stats, cost: '15001 gp' };
+	assert.equal(restored.updateOverrides('sword-id', swordDraft), true);
+
+	const armor = restored.getEntry('armor-id');
+	const wand = restored.getEntry('wand-id');
+	assert.equal(armor?.overrides?.title, undefined);
+	assert.equal(armor?.overrides?.stats?.cost, undefined);
+	assert.equal(armor?.overrides?.sourceText, undefined);
+	assert.notDeepEqual(armor?.overrides?.artwork, artwork);
+	assert.equal(wand?.overrides?.title, undefined);
+	assert.equal(wand?.overrides?.stats?.cost, undefined);
+	assert.equal(wand?.overrides?.sourceText, undefined);
+	assert.notDeepEqual(wand?.overrides?.artwork, artwork);
+
+	const effective = new Map(restored.getEntries().map((entry) => {
+		const source = items.find((item) => item.filePath === entry.filePath);
+		assert.ok(source);
+		return [entry.id, createEffectiveCardInput(source, items, entry.overrides).item];
+	}));
+	assert.equal(effective.get('sword-id')?.name, 'Sword of Khaine');
+	assert.equal(effective.get('sword-id')?.weight, 3);
+	assert.equal(effective.get('sword-id')?.cost, '15001 gp');
+	assert.equal(effective.get('armor-id')?.name, 'Armor of Invulnerability');
+	assert.equal(effective.get('armor-id')?.weight, 65);
+	assert.equal(effective.get('armor-id')?.description, 'Armor rules');
+	assert.equal(effective.get('armor-id')?.imagePath, 'armor.webp');
+	assert.equal(effective.get('wand-id')?.name, 'Wand of the Precocious Apprentice');
+	assert.equal(effective.get('wand-id')?.description, 'Wand rules');
+	assert.equal(effective.get('wand-id')?.imagePath, 'wand.webp');
+}

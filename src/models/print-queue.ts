@@ -13,15 +13,23 @@ export interface PrintQueueEntry {
 
 export type PrintQueueListener = (entries: readonly PrintQueueEntry[]) => void;
 
+export interface PrintQueueHydrationResult {
+	entries: PrintQueueEntry[];
+	repaired: boolean;
+}
+
 export class PrintQueueService {
 	private entries: PrintQueueEntry[];
 	private readonly listeners = new Set<PrintQueueListener>();
+	readonly hydrationRepaired: boolean;
 
 	constructor(
-		initialEntries: readonly PrintQueueEntry[] = [],
+		initialEntries: unknown = [],
 		private readonly createId: () => string = createQueueEntryId,
 	) {
-		this.entries = deserializePrintQueue(initialEntries);
+		const hydration = hydratePrintQueue(initialEntries, this.createId);
+		this.entries = hydration.entries;
+		this.hydrationRepaired = hydration.repaired;
 	}
 
 	getEntries(): readonly PrintQueueEntry[] {
@@ -46,7 +54,10 @@ export class PrintQueueService {
 		}
 
 		const entry: PrintQueueEntry = {
-			id: this.createId(),
+			id: createUniqueQueueEntryId(
+				new Set(this.entries.map((candidate) => candidate.id)),
+				this.createId,
+			),
 			filePath: normalizedPath,
 			quantity: 1,
 			...(normalizedOverrides ? { overrides: normalizedOverrides } : {}),
@@ -56,14 +67,14 @@ export class PrintQueueService {
 		return entry;
 	}
 
-	updateOverrides(id: string, overrides?: CardOverrides): void {
-		const entry = this.find(id);
+	updateOverrides(id: string, overrides?: CardOverrides): boolean {
+		const entry = this.getEntry(id);
 		if (!entry) {
-			return;
+			return false;
 		}
 		const normalized = normalizeCardOverrides(overrides);
 		if (areCardOverridesEqual(entry.overrides, normalized)) {
-			return;
+			return true;
 		}
 		if (normalized) {
 			entry.overrides = normalized;
@@ -71,10 +82,11 @@ export class PrintQueueService {
 			delete entry.overrides;
 		}
 		this.emit();
+		return true;
 	}
 
 	increment(id: string): void {
-		const entry = this.find(id);
+		const entry = this.getEntry(id);
 		if (!entry) {
 			return;
 		}
@@ -83,7 +95,7 @@ export class PrintQueueService {
 	}
 
 	decrement(id: string): void {
-		const entry = this.find(id);
+		const entry = this.getEntry(id);
 		if (!entry || entry.quantity <= 1) {
 			return;
 		}
@@ -92,11 +104,11 @@ export class PrintQueueService {
 	}
 
 	remove(id: string): void {
-		const next = this.entries.filter((entry) => entry.id !== id);
-		if (next.length === this.entries.length) {
+		const entry = this.getEntry(id);
+		if (!entry) {
 			return;
 		}
-		this.entries = next;
+		this.entries = this.entries.filter((candidate) => candidate !== entry);
 		this.emit();
 	}
 
@@ -109,7 +121,11 @@ export class PrintQueueService {
 	}
 
 	move(id: string, direction: -1 | 1): void {
-		const index = this.entries.findIndex((entry) => entry.id === id);
+		const target = this.getEntry(id);
+		if (!target) {
+			return;
+		}
+		const index = this.entries.indexOf(target);
 		const destination = index + direction;
 		if (index < 0 || destination < 0 || destination >= this.entries.length) {
 			return;
@@ -128,8 +144,8 @@ export class PrintQueueService {
 		return serializePrintQueue(this.entries);
 	}
 
-	private find(id: string): PrintQueueEntry | undefined {
-		return this.entries.find((entry) => entry.id === id);
+	getEntry(id: string): PrintQueueEntry | undefined {
+		return getUniqueQueueEntryById(this.entries, id);
 	}
 
 	private emit(): void {
@@ -150,24 +166,50 @@ export function serializePrintQueue(
 	}));
 }
 
-export function deserializePrintQueue(value: unknown): PrintQueueEntry[] {
+export function deserializePrintQueue(
+	value: unknown,
+	createId: () => string = createQueueEntryId,
+): PrintQueueEntry[] {
+	return hydratePrintQueue(value, createId).entries;
+}
+
+export function hydratePrintQueue(
+	value: unknown,
+	createId: () => string = createQueueEntryId,
+): PrintQueueHydrationResult {
 	if (!Array.isArray(value)) {
-		return [];
+		return { entries: [], repaired: value !== undefined && value !== null };
 	}
 
 	const entries: PrintQueueEntry[] = [];
+	const usedIds = new Set<string>();
+	const blockedIds = new Set(value.flatMap((candidate) => {
+		if (!isRecord(candidate) || typeof candidate.id !== 'string') {
+			return [];
+		}
+		const id = candidate.id.trim();
+		return id ? [id] : [];
+	}));
+	let repaired = false;
 	for (const candidate of value) {
 		if (!isRecord(candidate)) {
+			repaired = true;
 			continue;
 		}
-		const id = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+		const persistedId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
 		const filePath = typeof candidate.filePath === 'string'
 			? candidate.filePath.trim()
 			: '';
-		const quantity = typeof candidate.quantity === 'number'
-			? Math.floor(candidate.quantity)
-			: 0;
-		if (!id || !filePath || quantity < 1) {
+		const quantity = candidate.quantity === undefined
+			? 1
+			: typeof candidate.quantity === 'number'
+				? Math.floor(candidate.quantity)
+				: 0;
+		if (candidate.quantity === undefined) {
+			repaired = true;
+		}
+		if (!filePath || quantity < 1) {
+			repaired = true;
 			continue;
 		}
 		const overrides = normalizeCardOverrides(candidate.overrides);
@@ -177,7 +219,16 @@ export function deserializePrintQueue(value: unknown): PrintQueueEntry[] {
 			&& areCardOverridesEqual(entry.overrides, overrides));
 		if (existing) {
 			existing.quantity += quantity;
+			repaired = true;
 		} else {
+			const id = persistedId && !usedIds.has(persistedId)
+				? persistedId
+				: createUniqueQueueEntryId(blockedIds, createId);
+			if (id !== persistedId) {
+				repaired = true;
+			}
+			usedIds.add(id);
+			blockedIds.add(id);
 			entries.push({
 				id,
 				filePath,
@@ -186,12 +237,48 @@ export function deserializePrintQueue(value: unknown): PrintQueueEntry[] {
 			});
 		}
 	}
-	return entries;
+	return { entries, repaired };
 }
 
 function createQueueEntryId(): string {
 	return window.crypto?.randomUUID?.()
 		?? `queue-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function createUniqueQueueEntryId(
+	usedIds: ReadonlySet<string>,
+	createId: () => string,
+): string {
+	const generated = createId().trim() || createQueueEntryId();
+	if (!usedIds.has(generated)) {
+		return generated;
+	}
+	let suffix = 2;
+	while (usedIds.has(`${generated}-${suffix}`)) {
+		suffix += 1;
+	}
+	return `${generated}-${suffix}`;
+}
+
+export function getUniqueQueueEntryById(
+	entries: readonly PrintQueueEntry[],
+	id: string,
+): PrintQueueEntry | undefined {
+	const normalizedId = id.trim();
+	if (!normalizedId) {
+		return undefined;
+	}
+	let match: PrintQueueEntry | undefined;
+	for (const entry of entries) {
+		if (entry.id !== normalizedId) {
+			continue;
+		}
+		if (match) {
+			return undefined;
+		}
+		match = entry;
+	}
+	return match;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

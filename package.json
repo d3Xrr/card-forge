@@ -1,6 +1,6 @@
 {
 	"name": "ttrpg-card-forge",
-	"version": "0.4.1",
+	"version": "0.4.2",
 	"description": "Create printable TTRPG cards from structured Markdown content in your Obsidian vault.",
 	"main": "main.js",
 	"type": "module",

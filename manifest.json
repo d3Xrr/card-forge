@@ -1,7 +1,7 @@
 {
 	"id": "ttrpg-card-forge",
 	"name": "TTRPG Card Forge",
-	"version": "0.4.1",
+	"version": "0.4.2",
 	"minAppVersion": "1.7.2",
 	"description": "Create printable TTRPG cards from structured Markdown content in your Obsidian vault.",
 	"author": "D3Xr",

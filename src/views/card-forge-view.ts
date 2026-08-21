@@ -30,11 +30,13 @@ import {
 } from '../services/artwork-resolver';
 import { ArtworkImporter } from '../services/artwork-importer';
 import {
-	applyCardOverrides,
 	areCardOverridesEqual,
-	createCardOverridesFingerprint,
 	normalizeCardOverrides,
 } from '../services/card-overrides';
+import {
+	createEffectiveCardInput,
+	type EffectiveCardInput,
+} from '../services/effective-card';
 import {
 	type CardEditorActionId,
 	getCardEditorActions,
@@ -45,7 +47,6 @@ import {
 import {
 	discoverItemVariants,
 	getVariantDisplayLabel,
-	type ItemCardVariant,
 } from '../services/item-variants';
 import type { ItemIndex } from '../services/item-index';
 import {
@@ -108,14 +109,6 @@ interface PhysicalPlanLookup {
 	cacheStatus: PlanningCacheStatus;
 	completed?: FittedItemCardPlan;
 	promise?: Promise<FittedItemCardPlan>;
-}
-
-interface EffectiveCardInput {
-	source: ItemCardData;
-	item: ItemCardData;
-	overrides?: CardOverrides;
-	overrideFingerprint: string;
-	variant?: ItemCardVariant;
 }
 
 export class CardForgeView extends ItemView {
@@ -287,7 +280,11 @@ export class CardForgeView extends ItemView {
 				this.renderEditor();
 			}
 			const selectedItem = this.findSelectedItem();
-			const effective = selectedItem ? this.createEffectiveCardInput(selectedItem) : undefined;
+			const effective = selectedItem ? createEffectiveCardInput(
+				selectedItem,
+				this.itemIndex.getItems(),
+				this.draftOverrides,
+			) : undefined;
 			const selectedIdentity = effective
 				? this.createPhysicalPlanRequest(effective).identity.key
 				: undefined;
@@ -584,7 +581,11 @@ export class CardForgeView extends ItemView {
 			this.editorElement.createDiv({ cls: 'ttrpg-card-forge__empty', text: 'Select an item to edit its print card.' });
 			return;
 		}
-		const effective = this.createEffectiveCardInput(source);
+		const effective = createEffectiveCardInput(
+			source,
+			this.itemIndex.getItems(),
+			this.draftOverrides,
+		);
 		const variants = discoverItemVariants(source, this.itemIndex.getItems());
 		if (variants.length > 0) {
 			const variantRow = this.createEditorField('Variant');
@@ -1112,12 +1113,25 @@ export class CardForgeView extends ItemView {
 		if (!this.editingQueueEntryId) {
 			return;
 		}
-		this.appliedOverrides = structuredClone(this.draftOverrides);
-		this.printQueue.updateOverrides(this.editingQueueEntryId, this.appliedOverrides);
+		const nextOverrides = structuredClone(this.draftOverrides);
+		if (!this.printQueue.updateOverrides(this.editingQueueEntryId, nextOverrides)) {
+			console.error(
+				'TTRPG Card Forge: refused to save queue edits because the entry ID was missing or ambiguous',
+				this.editingQueueEntryId,
+			);
+			this.setEditorStatus('Could not save changes because this queue entry is no longer uniquely identified.');
+			new Notice('Card Forge could not safely identify that queue entry. Reload the plugin and try again.');
+			return;
+		}
+		this.appliedOverrides = nextOverrides;
 		this.setEditorStatus('');
 		const source = this.findSelectedItem();
 		this.renderPreviewIndicator(
-			source ? this.createEffectiveCardInput(source) : undefined,
+			source ? createEffectiveCardInput(
+				source,
+				this.itemIndex.getItems(),
+				this.draftOverrides,
+			) : undefined,
 		);
 	}
 
@@ -1163,23 +1177,6 @@ export class CardForgeView extends ItemView {
 		);
 	}
 
-	private createEffectiveCardInput(
-		source: ItemCardData,
-		overrides: CardOverrides | undefined = this.draftOverrides,
-	): EffectiveCardInput {
-		const normalized = normalizeCardOverrides(overrides);
-		const variants = discoverItemVariants(source, this.itemIndex.getItems());
-		const variant = variants.find((candidate) => candidate.id === normalized?.variant?.id);
-		const applied = applyCardOverrides(variant?.item ?? source, normalized);
-		return {
-			source,
-			item: applied.item,
-			...(applied.overrides ? { overrides: applied.overrides } : {}),
-			overrideFingerprint: createCardOverridesFingerprint(applied.overrides),
-			...(variant ? { variant } : {}),
-		};
-	}
-
 	private renderPreview(preserveExisting = false): void {
 		if (!this.cardHostElement || !this.diagnosticsElement || !this.openSourceButton || !this.addToQueueButton) {
 			return;
@@ -1191,7 +1188,11 @@ export class CardForgeView extends ItemView {
 		this.pageRenderGeneration += 1;
 		this.previewRequestGate.invalidate();
 		const source = this.findSelectedItem();
-		const effective = source ? this.createEffectiveCardInput(source) : undefined;
+		const effective = source ? createEffectiveCardInput(
+			source,
+			this.itemIndex.getItems(),
+			this.draftOverrides,
+		) : undefined;
 		this.renderPreviewIndicator(effective);
 		if (!preserveExisting) {
 			this.cardHostElement.empty();
@@ -1551,7 +1552,7 @@ export class CardForgeView extends ItemView {
 				continue;
 			}
 			queueEntryIds.add(entry.id);
-			const effective = this.createEffectiveCardInput(source, entry.overrides);
+			const effective = createEffectiveCardInput(source, items, entry.overrides);
 			const request = this.createPhysicalPlanRequest(effective);
 			if (!request.indexIsCurrent) {
 				indexIsStale = true;
@@ -1626,7 +1627,7 @@ export class CardForgeView extends ItemView {
 				if (!source) {
 					continue;
 				}
-				const effective = this.createEffectiveCardInput(source, entry.overrides);
+				const effective = createEffectiveCardInput(source, items, entry.overrides);
 				const lookup = this.beginPhysicalPlanLookup(effective);
 				if (!lookup.indexIsCurrent || !lookup.promise) {
 					throw new ItemIndexStaleError();
@@ -1897,7 +1898,11 @@ export class CardForgeView extends ItemView {
 			if (!source) {
 				return false;
 			}
-			const effective = this.createEffectiveCardInput(source, resolved.entry.overrides);
+			const effective = createEffectiveCardInput(
+				source,
+				this.itemIndex.getItems(),
+				resolved.entry.overrides,
+			);
 			const request = this.createPhysicalPlanRequest(effective);
 			return request.indexIsCurrent
 				&& !request.temporaryArtworkUnavailable
@@ -1930,8 +1935,13 @@ export class CardForgeView extends ItemView {
 		entryId: string,
 		artworkMode?: Extract<ArtworkEditorMode, 'local' | 'https'>,
 	): void {
-		const entry = this.printQueue.getEntries().find((candidate) => candidate.id === entryId);
+		const entry = this.printQueue.getEntry(entryId);
 		if (!entry) {
+			console.error(
+				'TTRPG Card Forge: refused to edit a queue entry because the entry ID was missing or ambiguous',
+				entryId,
+			);
+			new Notice('Card Forge could not safely identify that queue entry. Reload the plugin and try again.');
 			return;
 		}
 		if (this.searchInput) {

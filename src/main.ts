@@ -2,9 +2,7 @@ import { Notice, Plugin, TAbstractFile, TFile, WorkspaceLeaf } from 'obsidian';
 
 import { ItemIndex, type ItemIndexResult } from './services/item-index';
 import {
-	deserializePrintQueue,
 	PrintQueueService,
-	type PrintQueueEntry,
 } from './models/print-queue';
 import type { ItemCardData } from './models/item';
 import {
@@ -57,6 +55,11 @@ export default class TTRPGCardForgePlugin extends Plugin {
 				console.error('TTRPG Card Forge: could not persist print queue', error);
 			});
 		});
+		if (this.printQueue.hydrationRepaired) {
+			void this.persistPluginData().catch((error: unknown) => {
+				console.error('TTRPG Card Forge: could not persist repaired print queue identities', error);
+			});
+		}
 
 		this.registerView(
 			CARD_FORGE_VIEW_TYPE,
@@ -258,7 +261,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		this.queueIndexRebuild(0);
 	}
 
-	private async loadPluginData(): Promise<PrintQueueEntry[]> {
+	private async loadPluginData(): Promise<unknown> {
 		const saved = await this.loadData() as (
 			Partial<CardForgeSettings> & { printQueue?: unknown }
 		) | null;
@@ -276,7 +279,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 				? saved.openPdfAfterExport
 				: DEFAULT_SETTINGS.openPdfAfterExport,
 		};
-		return deserializePrintQueue(saved?.printQueue);
+		return saved?.printQueue;
 	}
 
 	private persistPluginData(): Promise<void> {

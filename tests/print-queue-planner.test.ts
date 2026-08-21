@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { ItemCardData } from '../src/models/item';
 import type { ItemCardPage } from '../src/models/item-card-page';
 import type { PrintQueueEntry } from '../src/models/print-queue';
+import { createEffectiveCardInput } from '../src/services/effective-card';
 import { paginatePhysicalCards } from '../src/export/a4-sheet-geometry';
 import { createRasterCacheKey } from '../src/export/card-raster-identity';
 import {
@@ -236,6 +237,83 @@ void test('same-source Dagger, Quarterstaff, and Warhammer plans stay isolated b
 		'variant-plan-1',
 		'variant-plan-2',
 	]);
+});
+
+void test('different-source edited cards retain five distinct A4 page identities after reload', () => {
+	const swordSource = {
+		...createItem('sword-source.md', 'Longsword'),
+		description: 'Sword rules',
+		weight: 3,
+	};
+	const armorSource = {
+		...createItem('armor-source.md', 'Armor of Invulnerability'),
+		description: 'Armor rules',
+		weight: 65,
+	};
+	const wandSource = {
+		...createItem('wand-source.md', 'Wand of the Precocious Apprentice'),
+		description: 'Wand rules',
+	};
+	const items = [swordSource, armorSource, wandSource];
+	const entries: PrintQueueEntry[] = [
+		{
+			id: 'sword-id',
+			filePath: swordSource.filePath,
+			quantity: 1,
+			overrides: {
+				title: 'Sword of Khaine',
+				stats: { cost: '15000 gp' },
+				sourceText: 'Homebrew',
+				artwork: { kind: 'temporary', id: 'missing-sword-art', origin: 'local' },
+			},
+		},
+		{ id: 'armor-id', filePath: armorSource.filePath, quantity: 1 },
+		{ id: 'wand-id', filePath: wandSource.filePath, quantity: 1 },
+	];
+	const pageCounts = new Map([
+		['sword-id', 1],
+		['armor-id', 2],
+		['wand-id', 2],
+	]);
+	const plans = new Map<string, PhysicalItemPlan>(entries.map((entry) => {
+		const source = items.find((item) => item.filePath === entry.filePath);
+		assert.ok(source);
+		const item = createEffectiveCardInput(source, items, entry.overrides).item;
+		const pageCount = pageCounts.get(entry.id) ?? 1;
+		return [entry.id, {
+			item,
+			pages: Array.from(
+				{ length: pageCount },
+				(_unused, index) => createPage(item, index, pageCount),
+			),
+			unfitPageIndexes: EMPTY_SET,
+			cacheKey: `plan-${entry.id}`,
+		}];
+	}));
+	const flattened = flattenPrintQueue(resolvePrintQueue(entries, items, plans));
+
+	assert.deepEqual(flattened.map((card) => card.itemName), [
+		'Sword of Khaine',
+		'Armor of Invulnerability',
+		'Armor of Invulnerability',
+		'Wand of the Precocious Apprentice',
+		'Wand of the Precocious Apprentice',
+	]);
+	assert.deepEqual(flattened.map((card) => card.queueEntryId), [
+		'sword-id',
+		'armor-id',
+		'armor-id',
+		'wand-id',
+		'wand-id',
+	]);
+	assert.deepEqual(flattened.map((card) => card.page.item.description), [
+		'Sword rules',
+		'Armor rules',
+		'Armor rules',
+		'Wand rules',
+		'Wand rules',
+	]);
+	assert.deepEqual(paginatePhysicalCards(flattened)[0], flattened);
 });
 
 function createItem(filePath: string, name: string): ItemCardData {
