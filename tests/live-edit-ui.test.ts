@@ -147,6 +147,34 @@ void test('preview toolbar chips are concise UI state and do not enter override 
 	});
 });
 
+void test('Edit mode centers one card-and-metadata block in a dedicated preview region', () => {
+	const view = readFileSync('src/views/card-forge-view.ts', 'utf8');
+	const css = readFileSync('styles.css', 'utf8');
+	const regionIndex = view.indexOf("cls: 'ttrpg-card-forge__card-preview-region'");
+	const blockIndex = view.indexOf("cls: 'ttrpg-card-forge__card-preview-block'", regionIndex);
+	const hostIndex = view.indexOf("cls: 'ttrpg-card-forge__card-host'", blockIndex);
+	const diagnosticsIndex = view.indexOf("cls: 'ttrpg-card-forge__diagnostics'", hostIndex);
+	assert.ok(regionIndex >= 0 && blockIndex > regionIndex);
+	assert.ok(hostIndex > blockIndex && diagnosticsIndex > hostIndex);
+	assert.match(
+		css,
+		/ttrpg-card-forge__preview\.is-editing \.ttrpg-card-forge__card-preview-region[^}]*grid-column:\s*2[^}]*grid-row:\s*2\s*\/\s*6/su,
+	);
+	assert.match(
+		css,
+		/^\.ttrpg-card-forge__card-preview-region\s*\{[^}]*justify-content:\s*center/msu,
+	);
+	assert.match(
+		getCssRule(css, '.ttrpg-card-forge__card-preview-block'),
+		/width:\s*min\(100%,\s*25rem\)/u,
+	);
+	assert.doesNotMatch(
+		getCssRule(css, '.ttrpg-card-forge__card-host'),
+		/750|1050|transform|scale/u,
+	);
+	assert.match(view, /applyCanonicalCardSize\(physicalHost\)/u);
+});
+
 function getCssRule(css: string, selector: string): string {
 	const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 	return css.match(new RegExp(`${escaped}\\s*\\{([^}]+)\\}`, 'u'))?.[1] ?? '';

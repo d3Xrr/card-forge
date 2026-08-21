@@ -22,6 +22,7 @@ void test('temporary local and HTTPS selections do not write to the vault by def
 	const https = await selectArtworkStorage(vault, store, payload('remote.webp'), {
 		persist: false,
 		origin: 'https',
+		folder: 'Never Created/Artwork',
 	});
 	assert.deepEqual(writes, []);
 	assert.equal(local.override.kind, 'temporary');
@@ -100,7 +101,7 @@ function createVault(writes: string[]): {
 } {
 	const paths = new Set<string>();
 	return {
-		getAbstractFileByPath: (path) => paths.has(path) ? {} : null,
+		getAbstractFileByPath: (path) => paths.has(path) ? { children: [] } : null,
 		createFolder: async (path) => { paths.add(path); },
 		createBinary: async (path) => { paths.add(path); writes.push(path); },
 	};

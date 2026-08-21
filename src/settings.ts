@@ -7,10 +7,12 @@ import {
 
 import type TTRPGCardForgePlugin from './main';
 import { DEFAULT_PDF_EXPORT_FOLDER } from './export/vault-pdf-storage';
+import { CARD_FORGE_ASSET_FOLDER } from './services/artwork-importer-core';
 
 export interface CardForgeSettings {
 	itemFolder: string;
 	pdfExportFolder: string;
+	cardForgeAssetsFolder: string;
 	showCropMarks: boolean;
 	openPdfAfterExport: boolean;
 }
@@ -18,6 +20,7 @@ export interface CardForgeSettings {
 export const DEFAULT_SETTINGS: CardForgeSettings = {
 	itemFolder: '2. Mechanics/items',
 	pdfExportFolder: DEFAULT_PDF_EXPORT_FOLDER,
+	cardForgeAssetsFolder: CARD_FORGE_ASSET_FOLDER,
 	showCropMarks: true,
 	openPdfAfterExport: false,
 };
@@ -50,6 +53,28 @@ export class CardForgeSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					await this.plugin.updatePdfExportFolder(value);
 				}));
+
+		const assetsFolderSetting = new Setting(containerEl)
+			.setName('Card Forge assets folder')
+			.setDesc('Vault-relative folder used for newly persisted Card Forge artwork.');
+		assetsFolderSetting.addText((text) => text
+			.setPlaceholder(DEFAULT_SETTINGS.cardForgeAssetsFolder)
+			.setValue(this.plugin.settings.cardForgeAssetsFolder)
+			.onChange(async (value) => {
+				try {
+					await this.plugin.updateCardForgeAssetsFolder(value);
+					assetsFolderSetting.settingEl.removeClass('is-invalid');
+					text.inputEl.removeAttribute('aria-invalid');
+					assetsFolderSetting.setDesc(
+						'Vault-relative folder used for newly persisted Card Forge artwork.',
+					);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : 'Invalid vault folder.';
+					assetsFolderSetting.settingEl.addClass('is-invalid');
+					text.inputEl.setAttribute('aria-invalid', 'true');
+					assetsFolderSetting.setDesc(message);
+				}
+			}));
 
 		new Setting(containerEl)
 			.setName('Show crop marks')
@@ -98,6 +123,16 @@ export class CardForgeSettingTab extends PluginSettingTab {
 				},
 			},
 			{
+				name: 'Card Forge assets folder',
+				desc: 'Vault-relative folder used for newly persisted Card Forge artwork.',
+				control: {
+					type: 'folder',
+					key: 'cardForgeAssetsFolder',
+					defaultValue: DEFAULT_SETTINGS.cardForgeAssetsFolder,
+					placeholder: DEFAULT_SETTINGS.cardForgeAssetsFolder,
+				},
+			},
+			{
 				name: 'Show crop marks',
 				desc: 'Draw thin cut marks outside each physical card. No bleed is added.',
 				control: {
@@ -134,6 +169,8 @@ export class CardForgeSettingTab extends PluginSettingTab {
 			await this.plugin.updateItemFolder(value);
 		} else if (key === 'pdfExportFolder' && typeof value === 'string') {
 			await this.plugin.updatePdfExportFolder(value);
+		} else if (key === 'cardForgeAssetsFolder' && typeof value === 'string') {
+			await this.plugin.updateCardForgeAssetsFolder(value);
 		} else if (key === 'showCropMarks' && typeof value === 'boolean') {
 			await this.plugin.updateShowCropMarks(value);
 		} else if (key === 'openPdfAfterExport' && typeof value === 'boolean') {

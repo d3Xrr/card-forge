@@ -19,10 +19,10 @@ export async function selectArtworkStorage(
 	vault: ArtworkAssetVault,
 	temporaryStore: TemporaryArtworkStore,
 	payload: ArtworkImportPayload,
-	options: { persist: boolean; origin: 'local' | 'https' },
+	options: { persist: boolean; origin: 'local' | 'https'; folder?: string },
 ): Promise<SelectedArtworkStorage> {
 	if (options.persist) {
-		const path = await storeImportedArtwork(vault, payload);
+		const path = await storeImportedArtwork(vault, payload, options.folder);
 		return {
 			override: { kind: 'vault', path },
 			vaultPath: path,

@@ -96,6 +96,10 @@ import { DebouncedAction } from '../services/debounced-action';
 import type { ArtworkImportPayload } from '../services/artwork-importer-core';
 import { selectArtworkStorage } from '../services/artwork-selection';
 import { loadSourceNote } from '../services/source-note';
+import {
+	isCurrentSourceNoteRender,
+	SourceNoteScrollMemory,
+} from '../services/source-note-scroll';
 import type {
 	TemporaryArtworkAsset,
 	TemporaryArtworkStore,
@@ -200,6 +204,9 @@ export class CardForgeView extends ItemView {
 	private exportInProgress = false;
 	private previewMode: PreviewMode = 'preview';
 	private sourceNoteGeneration = 0;
+	private sourceNoteScrollFrame: number | null = null;
+	private readonly sourceNoteScrollMemory = new SourceNoteScrollMemory();
+	private renderedSourceNotePath: string | undefined;
 	private selectedBatchFilePaths = new Set<string>();
 	private visibleBrowserItems: readonly ItemCardData[] = [];
 	private lastBrowserItems: readonly ItemCardData[] | undefined;
@@ -389,6 +396,11 @@ export class CardForgeView extends ItemView {
 		this.previewRequestGate.invalidate();
 		this.queueRequestGate.invalidate();
 		this.sourceNoteGeneration += 1;
+		this.rememberSourceNoteScroll();
+		if (this.sourceNoteScrollFrame !== null) {
+			window.cancelAnimationFrame(this.sourceNoteScrollFrame);
+			this.sourceNoteScrollFrame = null;
+		}
 		this.artworkLoadGeneration += 1;
 		this.temporaryArtworkStore.releaseOwner(this.temporaryArtworkOwner);
 		this.containerEl.children[1]?.removeClass('ttrpg-card-forge');
@@ -461,7 +473,10 @@ export class CardForgeView extends ItemView {
 	private createBrowserFilter(container: HTMLElement, label: string): HTMLSelectElement {
 		const control = container.createEl('label', { cls: 'ttrpg-card-forge__filter' });
 		control.createSpan({ text: label });
-		const select = control.createEl('select', { attr: { 'aria-label': `${label} filter` } });
+		const select = control.createEl('select', {
+			cls: 'dropdown ttrpg-card-forge__filter-select',
+			attr: { 'aria-label': `${label} filter` },
+		});
 		this.appendFilterOptions(select, []);
 		return select;
 	}
@@ -532,8 +547,10 @@ export class CardForgeView extends ItemView {
 		this.registerDomEvent(this.sourceModeButton, 'click', () => this.setPreviewMode('source-note'));
 		this.editorElement = preview.createDiv({ cls: 'ttrpg-card-forge__editor' });
 		this.editorElement.hidden = true;
-		this.cardHostElement = preview.createDiv({ cls: 'ttrpg-card-forge__card-host' });
-		this.diagnosticsElement = preview.createDiv({ cls: 'ttrpg-card-forge__diagnostics' });
+		const previewRegion = preview.createDiv({ cls: 'ttrpg-card-forge__card-preview-region' });
+		const previewBlock = previewRegion.createDiv({ cls: 'ttrpg-card-forge__card-preview-block' });
+		this.cardHostElement = previewBlock.createDiv({ cls: 'ttrpg-card-forge__card-host' });
+		this.diagnosticsElement = previewBlock.createDiv({ cls: 'ttrpg-card-forge__diagnostics' });
 		this.sourceNoteElement = preview.createDiv({
 			cls: 'ttrpg-card-forge__source-note',
 			attr: { 'aria-label': 'Original source note' },
@@ -783,6 +800,7 @@ export class CardForgeView extends ItemView {
 		if (this.selectedFilePath === filePath) {
 			return;
 		}
+		this.rememberSourceNoteScroll();
 		this.selectedFilePath = filePath;
 		this.resetEditorSession();
 		this.currentPageIndex = 0;
@@ -793,6 +811,9 @@ export class CardForgeView extends ItemView {
 
 	private setPreviewMode(mode: PreviewMode): void {
 		const wasSourceNote = this.previewMode === 'source-note';
+		if (wasSourceNote && mode !== 'source-note') {
+			this.rememberSourceNoteScroll();
+		}
 		this.previewMode = mode;
 		this.renderEditor();
 		if (mode === 'source-note') {
@@ -1311,7 +1332,11 @@ export class CardForgeView extends ItemView {
 				this.app.vault,
 				this.temporaryArtworkStore,
 				payload,
-				{ persist, origin },
+				{
+					persist,
+					origin,
+					folder: this.getSettings().cardForgeAssetsFolder,
+				},
 			);
 			if (!this.isCurrentArtworkLoad(generation, selectedFilePath, editingQueueEntryId)) {
 				if (selected.temporaryAsset) {
@@ -1519,6 +1544,9 @@ export class CardForgeView extends ItemView {
 		}
 		const generation = ++this.sourceNoteGeneration;
 		const selectedFilePath = this.selectedFilePath;
+		this.rememberSourceNoteScroll();
+		this.cancelSourceNoteScrollRestore();
+		this.renderedSourceNotePath = undefined;
 		this.sourceNoteContentElement.empty();
 		this.sourceNoteOpenButton.disabled = !selectedFilePath;
 		if (!selectedFilePath) {
@@ -1536,11 +1564,13 @@ export class CardForgeView extends ItemView {
 			const file = this.app.vault.getAbstractFileByPath(filePath);
 			return file instanceof TFile ? this.app.vault.cachedRead(file) : undefined;
 		});
-		if (
-			generation !== this.sourceNoteGeneration
-			|| this.previewMode !== 'source-note'
-			|| this.selectedFilePath !== selectedFilePath
-		) {
+		if (!isCurrentSourceNoteRender(
+			selectedFilePath,
+			generation,
+			this.selectedFilePath,
+			this.sourceNoteGeneration,
+			this.previewMode,
+		)) {
 			return;
 		}
 		if (result.status !== 'ready') {
@@ -1561,16 +1591,63 @@ export class CardForgeView extends ItemView {
 			result.filePath,
 			this,
 		);
-		if (
-			generation !== this.sourceNoteGeneration
-			|| this.previewMode !== 'source-note'
-			|| this.selectedFilePath !== selectedFilePath
-		) {
+		if (!isCurrentSourceNoteRender(
+			selectedFilePath,
+			generation,
+			this.selectedFilePath,
+			this.sourceNoteGeneration,
+			this.previewMode,
+		)) {
 			return;
 		}
 		this.sourceNoteContentElement.empty();
 		while (rendered.firstChild) {
 			this.sourceNoteContentElement.appendChild(rendered.firstChild);
+		}
+		this.renderedSourceNotePath = selectedFilePath;
+		this.sourceNoteScrollFrame = window.requestAnimationFrame(() => {
+			this.sourceNoteScrollFrame = null;
+			if (
+				!this.sourceNoteContentElement
+				|| !isCurrentSourceNoteRender(
+					selectedFilePath,
+					generation,
+					this.selectedFilePath,
+					this.sourceNoteGeneration,
+					this.previewMode,
+				)
+			) {
+				return;
+			}
+			const maximumScrollTop = Math.max(
+				0,
+				this.sourceNoteContentElement.scrollHeight
+					- this.sourceNoteContentElement.clientHeight,
+			);
+			this.sourceNoteContentElement.scrollTop = this.sourceNoteScrollMemory.restore(
+				selectedFilePath,
+				maximumScrollTop,
+			);
+		});
+	}
+
+	private rememberSourceNoteScroll(): void {
+		if (
+			this.sourceNoteScrollFrame === null
+			&& this.sourceNoteContentElement
+			&& this.renderedSourceNotePath
+		) {
+			this.sourceNoteScrollMemory.remember(
+				this.renderedSourceNotePath,
+				this.sourceNoteContentElement.scrollTop,
+			);
+		}
+	}
+
+	private cancelSourceNoteScrollRestore(): void {
+		if (this.sourceNoteScrollFrame !== null) {
+			window.cancelAnimationFrame(this.sourceNoteScrollFrame);
+			this.sourceNoteScrollFrame = null;
 		}
 	}
 
@@ -2305,6 +2382,7 @@ export class CardForgeView extends ItemView {
 		if (this.searchInput) {
 			this.searchInput.value = '';
 		}
+		this.rememberSourceNoteScroll();
 		this.selectedFilePath = entry.filePath;
 		this.editingQueueEntryId = entry.id;
 		this.appliedOverrides = structuredClone(entry.overrides);

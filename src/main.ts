@@ -22,6 +22,7 @@ import {
 	collectTemporaryArtworkIds,
 	TemporaryArtworkStore,
 } from './services/temporary-artwork-store';
+import { normalizeArtworkAssetFolder } from './services/artwork-importer-core';
 
 const INDEX_REBUILD_DELAY_MS = 350;
 const QUEUE_ARTWORK_OWNER = 'print-queue';
@@ -157,14 +158,38 @@ export default class TTRPGCardForgePlugin extends Plugin {
 
 	async activateView(): Promise<void> {
 		const existingLeaf = this.app.workspace.getLeavesOfType(CARD_FORGE_VIEW_TYPE)[0];
+		const trace = this.planningPerformance.start(
+			existingLeaf ? 'warm-refocus' : 'cold-open',
+			'view-activation',
+		);
 		if (existingLeaf) {
-			await this.app.workspace.revealLeaf(existingLeaf);
+			if (trace) {
+				await trace.measureAsync(
+					'viewReveal',
+					() => this.app.workspace.revealLeaf(existingLeaf),
+				);
+				trace.finish();
+			} else {
+				await this.app.workspace.revealLeaf(existingLeaf);
+			}
 			return;
 		}
 
 		const leaf = this.app.workspace.getLeaf('tab');
-		await leaf.setViewState({ type: CARD_FORGE_VIEW_TYPE, active: true });
-		await this.app.workspace.revealLeaf(leaf);
+		if (trace) {
+			await trace.measureAsync(
+				'viewInitialization',
+				() => leaf.setViewState({ type: CARD_FORGE_VIEW_TYPE, active: true }),
+			);
+			await trace.measureAsync(
+				'viewReveal',
+				() => this.app.workspace.revealLeaf(leaf),
+			);
+			trace.finish();
+		} else {
+			await leaf.setViewState({ type: CARD_FORGE_VIEW_TYPE, active: true });
+			await this.app.workspace.revealLeaf(leaf);
+		}
 	}
 
 	async updateItemFolder(itemFolder: string): Promise<void> {
@@ -176,6 +201,11 @@ export default class TTRPGCardForgePlugin extends Plugin {
 	async updatePdfExportFolder(pdfExportFolder: string): Promise<void> {
 		this.settings.pdfExportFolder = pdfExportFolder.trim()
 			|| DEFAULT_SETTINGS.pdfExportFolder;
+		await this.persistPluginData();
+	}
+
+	async updateCardForgeAssetsFolder(cardForgeAssetsFolder: string): Promise<void> {
+		this.settings.cardForgeAssetsFolder = normalizeArtworkAssetFolder(cardForgeAssetsFolder);
 		await this.persistPluginData();
 	}
 
@@ -272,6 +302,9 @@ export default class TTRPGCardForgePlugin extends Plugin {
 			pdfExportFolder: typeof saved?.pdfExportFolder === 'string'
 				? saved.pdfExportFolder
 				: DEFAULT_SETTINGS.pdfExportFolder,
+			cardForgeAssetsFolder: normalizeSavedArtworkAssetFolder(
+				saved?.cardForgeAssetsFolder,
+			),
 			showCropMarks: typeof saved?.showCropMarks === 'boolean'
 				? saved.showCropMarks
 				: DEFAULT_SETTINGS.showCropMarks,
@@ -297,5 +330,16 @@ export default class TTRPGCardForgePlugin extends Plugin {
 				this.printQueue.getEntries().map((entry) => entry.overrides),
 			),
 		);
+	}
+}
+
+function normalizeSavedArtworkAssetFolder(value: unknown): string {
+	if (typeof value !== 'string') {
+		return DEFAULT_SETTINGS.cardForgeAssetsFolder;
+	}
+	try {
+		return normalizeArtworkAssetFolder(value);
+	} catch {
+		return DEFAULT_SETTINGS.cardForgeAssetsFolder;
 	}
 }

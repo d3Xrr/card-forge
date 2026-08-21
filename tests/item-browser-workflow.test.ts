@@ -177,10 +177,24 @@ void test('browser controls are semantic, compact, responsive, and isolated from
 	assert.match(view, /text: 'Add selected'/u);
 	assert.match(view, /text: 'Select all filtered'/u);
 	assert.match(view, /this\.printQueue\.addMany/u);
+	assert.match(view, /cls: 'dropdown ttrpg-card-forge__filter-select'/u);
 	assert.match(css, /ttrpg-card-forge__batch-actions[^}]*flex-wrap:\s*wrap/isu);
 	assert.match(css, /ttrpg-card-forge__filters[^}]*repeat\(2,\s*minmax\(0,\s*1fr\)\)/isu);
 	assert.match(css, /max-width:\s*420px[\s\S]*ttrpg-card-forge__filters[^}]*minmax\(0,\s*1fr\)/iu);
 	assert.doesNotMatch(workflow, /ItemCardFitService|beginPhysicalPlan|paginatePhysical|PdfExport|ArtworkBounds/iu);
+});
+
+void test('filter dropdown styling uses scoped Obsidian theme variables', () => {
+	const css = readFileSync('styles.css', 'utf8');
+	const selectRule = getCssRule(css, '.ttrpg-card-forge__filter-select');
+	const optionRule = getCssRule(css, '.ttrpg-card-forge__filter-select option');
+	assert.match(selectRule, /color:\s*var\(--text-normal\)/u);
+	assert.match(selectRule, /background-color:\s*var\(--background-modifier-form-field\)/u);
+	assert.match(optionRule, /color:\s*var\(--text-normal\)/u);
+	assert.match(optionRule, /background-color:\s*var\(--background-primary\)/u);
+	assert.match(css, /\.theme-dark \.ttrpg-card-forge__filter-select[^}]*color-scheme:\s*dark/su);
+	assert.match(css, /\.theme-light \.ttrpg-card-forge__filter-select[^}]*color-scheme:\s*light/su);
+	assert.doesNotMatch(css, /(^|\})\s*(select|option)\s*\{/mu);
 });
 
 function createItem(
@@ -196,4 +210,9 @@ function createItem(
 		rawTags: [],
 		...fields,
 	};
+}
+
+function getCssRule(css: string, selector: string): string {
+	const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+	return css.match(new RegExp(`${escaped}\\s*\\{([^}]+)\\}`, 'u'))?.[1] ?? '';
 }

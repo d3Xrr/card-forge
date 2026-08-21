@@ -11,13 +11,15 @@ export type PlanningPerformanceStage =
 	| 'domFitMeasurement'
 	| 'paginationCompaction'
 	| 'finalCanonicalValidation'
-	| 'previewRendering';
+	| 'previewRendering'
+	| 'viewInitialization'
+	| 'viewReveal';
 
 export type PlanningCacheStatus = 'miss' | 'pending' | 'hit';
 
 export interface PlanningPerformanceRecord {
 	itemName: string;
-	operation: 'physical-plan' | 'preview-render';
+	operation: 'physical-plan' | 'preview-render' | 'view-activation';
 	cacheStatus?: PlanningCacheStatus;
 	totalMs: number;
 	pageCount?: number;

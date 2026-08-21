@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { loadSourceNote } from '../src/services/source-note';
+import {
+	isCurrentSourceNoteRender,
+	SourceNoteScrollMemory,
+} from '../src/services/source-note-scroll';
 
 void test('loads the exact current source Markdown without accepting card overrides', async () => {
 	const original = '---\nname: +1 Weapon\n---\n\nOriginal source rules.';
@@ -42,6 +46,25 @@ void test('missing and unreadable source notes fail with clear read-only results
 	}
 });
 
+void test('Source note scroll memory is independent per source and clamps safely', () => {
+	const memory = new SourceNoteScrollMemory();
+	assert.equal(memory.restore('items/unseen.md', 2_000), 0);
+	memory.remember('items/a.md', 1_800);
+	memory.remember('items/b.md', 400);
+	assert.equal(memory.restore('items/a.md', 3_000), 1_800);
+	assert.equal(memory.restore('items/b.md', 3_000), 400);
+	assert.equal(memory.restore('items/a.md', 900), 900);
+	memory.remember('items/a.md', Number.POSITIVE_INFINITY);
+	assert.equal(memory.restore('items/a.md', 900), 0);
+});
+
+void test('stale Source note renders cannot restore another source scroll position', () => {
+	assert.equal(isCurrentSourceNoteRender('items/a.md', 1, 'items/a.md', 1, 'source-note'), true);
+	assert.equal(isCurrentSourceNoteRender('items/a.md', 1, 'items/b.md', 2, 'source-note'), false);
+	assert.equal(isCurrentSourceNoteRender('items/b.md', 1, 'items/b.md', 2, 'source-note'), false);
+	assert.equal(isCurrentSourceNoteRender('items/b.md', 2, 'items/b.md', 2, 'preview'), false);
+});
+
 void test('Source note integration is native-rendered, read-only, and context-scoped', () => {
 	const view = readFileSync('src/views/card-forge-view.ts', 'utf8');
 	const modeStart = view.indexOf('private setPreviewMode');
@@ -59,5 +82,9 @@ void test('Source note integration is native-rendered, read-only, and context-sc
 	assert.match(sourceNoteMethod, /MarkdownRenderer\.render/u);
 	assert.doesNotMatch(sourceNoteMethod, /draftOverrides|appliedOverrides|contenteditable|createEl\('textarea'/u);
 	assert.match(view, /sourceNoteGeneration/u);
-	assert.match(view, /this\.selectedFilePath !== selectedFilePath/u);
+	assert.match(sourceNoteMethod, /isCurrentSourceNoteRender/u);
+	assert.match(sourceNoteMethod, /requestAnimationFrame/u);
+	assert.match(sourceNoteMethod, /scrollHeight/u);
+	assert.match(view, /SourceNoteScrollMemory/u);
+	assert.doesNotMatch(view, /sourceNoteScrollMemory[\s\S]{0,120}persistPluginData/u);
 });
