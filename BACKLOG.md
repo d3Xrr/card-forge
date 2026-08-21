@@ -29,6 +29,16 @@ Pagination currently remains in a stable shared location when switching between 
 
 Measure Card Forge resource use while the plugin is enabled and its view is not open. Audit idle CPU activity, retained memory, metadata-cache and index memory, registered event listeners, timers or intervals, queue persistence activity, planner and cache lifetime, artwork resources and Object URLs, and A4, PDF, or raster resources. With no Card Forge view open, there should be no periodic background CPU work, card planning, artwork processing, PDF or A4 materialization, or DOM work—only lightweight data and listeners required for plugin functionality. Measure first in a future performance pass; do not optimize speculatively.
 
+## Longer-term deferred work
+
+- Customization presets.
+- A printer-friendly style preset.
+- Duplex printing and card backs.
+- Generic Markdown input and parser work.
+- A manual custom-card creator.
+- Additional card types, including spells, feats, conditions, and monster or NPC cards.
+- GitHub Actions Node-runtime maintenance after the 0.5.0 release; do not update action dependencies solely to silence a non-blocking runtime warning.
+
 ## Dedicated bullet-marker troubleshooting
 
 Run a separate evidence-driven troubleshooting session for the physical-card bullet marker. Inspect computed styles, the actual pseudo-element and glyph metrics, line height, parent positioning, font rendering, and screenshot/manual results before changing further CSS constants. Bullet appearance is not a 0.4.0 release blocker.
