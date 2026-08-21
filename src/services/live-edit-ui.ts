@@ -35,7 +35,14 @@ export interface PreviewStatusChip {
 export interface PreviewModeState {
 	previewActive: boolean;
 	editActive: boolean;
+	sourceActive: boolean;
+	showCard: boolean;
+	showEditor: boolean;
+	showSourceNote: boolean;
+	showGlobalPreviewActions: boolean;
 }
+
+export type PreviewMode = 'preview' | 'edit' | 'source-note';
 
 export function createVariantPreservationNotice(
 	variantLabel: string,
@@ -112,10 +119,15 @@ export function createTemporaryArtworkStatus(): string {
 	return 'Temporary until restart';
 }
 
-export function createPreviewModeState(editing: boolean): PreviewModeState {
+export function createPreviewModeState(mode: PreviewMode): PreviewModeState {
 	return {
-		previewActive: !editing,
-		editActive: editing,
+		previewActive: mode === 'preview',
+		editActive: mode === 'edit',
+		sourceActive: mode === 'source-note',
+		showCard: mode !== 'source-note',
+		showEditor: mode === 'edit',
+		showSourceNote: mode === 'source-note',
+		showGlobalPreviewActions: mode === 'preview',
 	};
 }
 

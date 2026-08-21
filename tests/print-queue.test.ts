@@ -29,6 +29,85 @@ void test('adds a new item and increments an existing item instead of duplicatin
 	}]);
 });
 
+void test('batch add preserves index order, creates stable IDs, and emits once', () => {
+	const queue = createQueue();
+	const existing = queue.add('items/existing.md');
+	let notifications = 0;
+	queue.subscribe(() => {
+		notifications += 1;
+	});
+	const result = queue.addMany([
+		{ filePath: 'items/armor.md' },
+		{ filePath: 'items/wand.md' },
+		{ filePath: 'items/sword.md' },
+	]);
+
+	assert.equal(result.rejected, 0);
+	assert.equal(notifications, 1);
+	assert.deepEqual(queue.getEntries().map((entry) => entry.filePath), [
+		'items/existing.md',
+		'items/armor.md',
+		'items/wand.md',
+		'items/sword.md',
+	]);
+	assert.deepEqual(result.entries.map((entry) => entry.quantity), [1, 1, 1]);
+	assert.equal(new Set(queue.getEntries().map((entry) => entry.id)).size, 4);
+	assert.equal(queue.getEntry(existing.id)?.filePath, 'items/existing.md');
+});
+
+void test('batch add keeps same-source override snapshots independent', () => {
+	const queue = createQueue();
+	const result = queue.addMany([
+		{ filePath: 'items/generic.md', overrides: { variant: { id: 'dagger' } } },
+		{ filePath: 'items/generic.md', overrides: { variant: { id: 'warhammer' } } },
+	]);
+	const [dagger, warhammer] = result.entries;
+	assert.notEqual(dagger?.id, warhammer?.id);
+	assert.deepEqual(dagger?.overrides, { variant: { id: 'dagger' } });
+	assert.deepEqual(warhammer?.overrides, { variant: { id: 'warhammer' } });
+	queue.updateOverrides(dagger.id, { title: 'Edited dagger' });
+	assert.deepEqual(queue.getEntry(warhammer.id)?.overrides, { variant: { id: 'warhammer' } });
+});
+
+void test('batch defaults never inherit the active editor draft after queue reload', () => {
+	const activeSwordDraft: CardOverrides = {
+		title: 'Sword of Khaine',
+		stats: { cost: '15000 gp' },
+		sourceText: 'Homebrew',
+		artwork: { kind: 'temporary', id: 'sword-art', origin: 'local' },
+	};
+	const queue = new PrintQueueService([
+		{
+			id: 'edited-sword',
+			filePath: 'items/sword.md',
+			quantity: 1,
+			overrides: activeSwordDraft,
+		},
+	], (() => {
+		let id = 1;
+		return () => `batch-${id++}`;
+	})());
+	queue.addMany([
+		{ filePath: 'items/armor.md' },
+		{ filePath: 'items/wand.md' },
+	]);
+	const restored = new PrintQueueService(JSON.parse(JSON.stringify(queue.serialize())) as unknown);
+	assert.equal(restored.getEntry('batch-1')?.overrides, undefined);
+	assert.equal(restored.getEntry('batch-2')?.overrides, undefined);
+	assert.deepEqual(restored.getEntry('edited-sword')?.overrides, activeSwordDraft);
+});
+
+void test('batch add reports invalid paths without losing valid additions', () => {
+	const queue = createQueue();
+	const result = queue.addMany([
+		{ filePath: 'items/valid.md' },
+		{ filePath: '   ' },
+	]);
+	assert.equal(result.entries.length, 1);
+	assert.equal(result.rejected, 1);
+	assert.equal(queue.getEntries()[0]?.filePath, 'items/valid.md');
+});
+
 void test('increments and decrements quantity without dropping below one', () => {
 	const queue = createQueue();
 	const entry = queue.add('items/scimitar.md');

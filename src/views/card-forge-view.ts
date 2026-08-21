@@ -1,4 +1,4 @@
-import { ItemView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
+import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 
 import { PdfExportService, type PdfExportProgress } from '../export/pdf-export-service';
 import { A4_CARDS_PER_SHEET } from '../export/a4-sheet-geometry';
@@ -58,6 +58,22 @@ import {
 	type LatestRequestToken,
 } from '../services/planning-interactions';
 import {
+	applyItemBrowserInteraction,
+	clearBatchSelection,
+	createItemBrowserFilterOptions,
+	DEFAULT_ITEM_BROWSER_FILTERS,
+	filterIndexedItems,
+	formatBrowserResultCount,
+	getItemBrowserTypeText,
+	isItemBrowserFiltered,
+	removeBatchSelections,
+	resolveBatchSelection,
+	selectAllFilteredItems,
+	type AttunementFilter,
+	type ItemBrowserFilterOption,
+	type ItemBrowserFilters,
+} from '../services/item-browser-workflow';
+import {
 	createEffectiveItemFingerprint,
 	createPhysicalPlanCacheIdentity,
 	type PhysicalPlanCache,
@@ -79,6 +95,7 @@ import {
 import { DebouncedAction } from '../services/debounced-action';
 import type { ArtworkImportPayload } from '../services/artwork-importer-core';
 import { selectArtworkStorage } from '../services/artwork-selection';
+import { loadSourceNote } from '../services/source-note';
 import type {
 	TemporaryArtworkAsset,
 	TemporaryArtworkStore,
@@ -94,6 +111,7 @@ import {
 	resolveRulesDraftOverride,
 	validateVaultArtworkPath,
 	type ArtworkEditorMode,
+	type PreviewMode,
 	type VariantPreservationNotice,
 } from '../services/live-edit-ui';
 
@@ -121,21 +139,34 @@ export class CardForgeView extends ItemView {
 	private readonly pdfExportService: PdfExportService;
 	private readonly artworkImporter: ArtworkImporter;
 	private searchInput: HTMLInputElement | null = null;
-	private totalCountElement: HTMLElement | null = null;
+	private typeFilterSelect: HTMLSelectElement | null = null;
+	private rarityFilterSelect: HTMLSelectElement | null = null;
+	private sourceFilterSelect: HTMLSelectElement | null = null;
+	private attunementFilterSelect: HTMLSelectElement | null = null;
+	private resetFiltersButton: HTMLButtonElement | null = null;
 	private filteredCountElement: HTMLElement | null = null;
+	private batchSelectedCountElement: HTMLElement | null = null;
+	private addBatchButton: HTMLButtonElement | null = null;
+	private selectAllFilteredButton: HTMLButtonElement | null = null;
+	private clearBatchButton: HTMLButtonElement | null = null;
 	private resultsElement: HTMLElement | null = null;
 	private cardHostElement: HTMLElement | null = null;
 	private diagnosticsElement: HTMLElement | null = null;
+	private sourceNoteElement: HTMLElement | null = null;
+	private sourceNoteContentElement: HTMLElement | null = null;
+	private previewActionsElement: HTMLElement | null = null;
 	private pageNavigationElement: HTMLElement | null = null;
 	private previousPageButton: HTMLButtonElement | null = null;
 	private nextPageButton: HTMLButtonElement | null = null;
 	private pageLabelElement: HTMLElement | null = null;
 	private addToQueueButton: HTMLButtonElement | null = null;
 	private openSourceButton: HTMLButtonElement | null = null;
+	private sourceNoteOpenButton: HTMLButtonElement | null = null;
 	private editorElement: HTMLElement | null = null;
 	private editorStatusElement: HTMLElement | null = null;
 	private previewModeButton: HTMLButtonElement | null = null;
 	private editModeButton: HTMLButtonElement | null = null;
+	private sourceModeButton: HTMLButtonElement | null = null;
 	private previewIndicatorElement: HTMLElement | null = null;
 	private queueListElement: HTMLElement | null = null;
 	private queueSummaryElement: HTMLElement | null = null;
@@ -167,7 +198,11 @@ export class CardForgeView extends ItemView {
 	private currentArtworkRevisionFingerprint: string | undefined;
 	private currentPreviewPlanKey: string | undefined;
 	private exportInProgress = false;
-	private isEditMode = false;
+	private previewMode: PreviewMode = 'preview';
+	private sourceNoteGeneration = 0;
+	private selectedBatchFilePaths = new Set<string>();
+	private visibleBrowserItems: readonly ItemCardData[] = [];
+	private lastBrowserItems: readonly ItemCardData[] | undefined;
 	private draftOverrides: CardOverrides | undefined;
 	private appliedOverrides: CardOverrides | undefined;
 	private editingQueueEntryId: string | undefined;
@@ -224,7 +259,6 @@ export class CardForgeView extends ItemView {
 			text: 'Physical item cards and A4 PDF export',
 			cls: 'ttrpg-card-forge__subtitle',
 		});
-		this.totalCountElement = header.createDiv({ cls: 'ttrpg-card-forge__total-count' });
 
 		const workspace = container.createDiv({ cls: 'ttrpg-card-forge__workspace' });
 		this.buildBrowser(workspace);
@@ -233,12 +267,38 @@ export class CardForgeView extends ItemView {
 
 		if (this.searchInput) {
 			this.registerDomEvent(this.searchInput, 'input', () => {
-				const selectionChanged = this.renderBrowser();
-				if (selectionChanged) {
-					this.resetEditorSession();
-					this.renderEditor();
-					this.renderPreview();
-				}
+				this.renderBrowser();
+			});
+		}
+		for (const select of [
+			this.typeFilterSelect,
+			this.rarityFilterSelect,
+			this.sourceFilterSelect,
+			this.attunementFilterSelect,
+		]) {
+			if (select) {
+				this.registerDomEvent(select, 'change', () => this.renderBrowser());
+			}
+		}
+		if (this.resetFiltersButton) {
+			this.registerDomEvent(this.resetFiltersButton, 'click', () => this.resetBrowserFilters());
+		}
+		if (this.addBatchButton) {
+			this.registerDomEvent(this.addBatchButton, 'click', () => this.addBatchSelectionToQueue());
+		}
+		if (this.selectAllFilteredButton) {
+			this.registerDomEvent(this.selectAllFilteredButton, 'click', () => {
+				this.selectedBatchFilePaths = selectAllFilteredItems(
+					this.selectedBatchFilePaths,
+					this.visibleBrowserItems,
+				);
+				this.renderBrowser();
+			});
+		}
+		if (this.clearBatchButton) {
+			this.registerDomEvent(this.clearBatchButton, 'click', () => {
+				this.selectedBatchFilePaths = clearBatchSelection();
+				this.renderBrowser();
 			});
 		}
 		if (this.previousPageButton) {
@@ -252,6 +312,9 @@ export class CardForgeView extends ItemView {
 		}
 		if (this.openSourceButton) {
 			this.registerDomEvent(this.openSourceButton, 'click', () => this.openSelectedItem());
+		}
+		if (this.sourceNoteOpenButton) {
+			this.registerDomEvent(this.sourceNoteOpenButton, 'click', () => this.openSelectedItem());
 		}
 		if (this.clearQueueButton) {
 			this.registerDomEvent(this.clearQueueButton, 'click', () => this.printQueue.clear());
@@ -279,23 +342,27 @@ export class CardForgeView extends ItemView {
 				this.resetEditorSession();
 				this.renderEditor();
 			}
-			const selectedItem = this.findSelectedItem();
-			const effective = selectedItem ? createEffectiveCardInput(
-				selectedItem,
-				this.itemIndex.getItems(),
-				this.draftOverrides,
-			) : undefined;
-			const selectedIdentity = effective
-				? this.createPhysicalPlanRequest(effective).identity.key
-				: undefined;
-			const effectivePlanChanged = selectedIdentity === undefined
-				? this.currentPreviewPlanKey !== undefined
-				: shouldRequestSelectedPlan(
-					this.currentPreviewPlanKey ?? null,
-					selectedIdentity,
-				);
-			if (selectionChanged || effectivePlanChanged) {
-				this.renderPreview();
+			if (this.previewMode === 'source-note') {
+				void this.renderSourceNote();
+			} else {
+				const selectedItem = this.findSelectedItem();
+				const effective = selectedItem ? createEffectiveCardInput(
+					selectedItem,
+					this.itemIndex.getItems(),
+					this.draftOverrides,
+				) : undefined;
+				const selectedIdentity = effective
+					? this.createPhysicalPlanRequest(effective).identity.key
+					: undefined;
+				const effectivePlanChanged = selectedIdentity === undefined
+					? this.currentPreviewPlanKey !== undefined
+					: shouldRequestSelectedPlan(
+						this.currentPreviewPlanKey ?? null,
+						selectedIdentity,
+					);
+				if (selectionChanged || effectivePlanChanged) {
+					this.renderPreview();
+				}
 			}
 			this.renderQueue();
 		});
@@ -321,6 +388,7 @@ export class CardForgeView extends ItemView {
 		this.pageRenderGeneration += 1;
 		this.previewRequestGate.invalidate();
 		this.queueRequestGate.invalidate();
+		this.sourceNoteGeneration += 1;
 		this.artworkLoadGeneration += 1;
 		this.temporaryArtworkStore.releaseOwner(this.temporaryArtworkOwner);
 		this.containerEl.children[1]?.removeClass('ttrpg-card-forge');
@@ -344,11 +412,69 @@ export class CardForgeView extends ItemView {
 			cls: 'ttrpg-card-forge__search',
 			attr: { 'aria-label': 'Search indexed items' },
 		});
+		const filters = toolbar.createDiv({
+			cls: 'ttrpg-card-forge__filters',
+			attr: { 'aria-label': 'Item filters' },
+		});
+		this.typeFilterSelect = this.createBrowserFilter(filters, 'Type');
+		this.rarityFilterSelect = this.createBrowserFilter(filters, 'Rarity');
+		this.sourceFilterSelect = this.createBrowserFilter(filters, 'Source');
+		this.attunementFilterSelect = this.createBrowserFilter(filters, 'Attunement');
+		this.appendFilterOptions(this.attunementFilterSelect, [
+			{ value: 'required', label: 'Requires attunement' },
+			{ value: 'none', label: 'No attunement' },
+		]);
+		this.resetFiltersButton = toolbar.createEl('button', {
+			text: 'Reset filters',
+			cls: 'ttrpg-card-forge__reset-filters',
+			attr: { type: 'button' },
+		});
 		this.filteredCountElement = toolbar.createDiv({ cls: 'ttrpg-card-forge__filtered-count' });
+		const batchToolbar = toolbar.createDiv({
+			cls: 'ttrpg-card-forge__batch-toolbar',
+			attr: { role: 'toolbar', 'aria-label': 'Batch item selection' },
+		});
+		this.batchSelectedCountElement = batchToolbar.createDiv({
+			cls: 'ttrpg-card-forge__batch-count',
+			attr: { role: 'status', 'aria-live': 'polite' },
+		});
+		const batchActions = batchToolbar.createDiv({ cls: 'ttrpg-card-forge__batch-actions' });
+		this.addBatchButton = batchActions.createEl('button', {
+			text: 'Add selected',
+			cls: 'mod-cta',
+			attr: { type: 'button' },
+		});
+		this.selectAllFilteredButton = batchActions.createEl('button', {
+			text: 'Select all filtered',
+			attr: { type: 'button' },
+		});
+		this.clearBatchButton = batchActions.createEl('button', {
+			text: 'Clear',
+			attr: { type: 'button', 'aria-label': 'Clear all batch selections' },
+		});
 		this.resultsElement = browser.createDiv({
 			cls: 'ttrpg-card-forge__results',
-			attr: { role: 'listbox', 'aria-label': 'Indexed items' },
+			attr: { role: 'list', 'aria-label': 'Indexed items' },
 		});
+	}
+
+	private createBrowserFilter(container: HTMLElement, label: string): HTMLSelectElement {
+		const control = container.createEl('label', { cls: 'ttrpg-card-forge__filter' });
+		control.createSpan({ text: label });
+		const select = control.createEl('select', { attr: { 'aria-label': `${label} filter` } });
+		this.appendFilterOptions(select, []);
+		return select;
+	}
+
+	private appendFilterOptions(
+		select: HTMLSelectElement,
+		options: readonly ItemBrowserFilterOption[],
+	): void {
+		select.empty();
+		select.createEl('option', { text: 'All', value: '' });
+		for (const option of options) {
+			select.createEl('option', option);
+		}
 	}
 
 	private buildPreview(workspace: HTMLElement): void {
@@ -377,6 +503,10 @@ export class CardForgeView extends ItemView {
 			text: 'Edit card',
 			attr: { type: 'button', 'aria-pressed': 'false' },
 		});
+		this.sourceModeButton = modeToggle.createEl('button', {
+			text: 'Source note',
+			attr: { type: 'button', 'aria-pressed': 'false' },
+		});
 		this.pageNavigationElement = previewToolbar.createDiv({
 			cls: 'ttrpg-card-forge__page-navigation',
 			attr: { 'aria-label': 'Card page navigation' },
@@ -397,13 +527,28 @@ export class CardForgeView extends ItemView {
 			cls: 'ttrpg-card-forge__preview-indicator',
 			attr: { 'aria-label': 'Card state' },
 		});
-		this.registerDomEvent(this.previewModeButton, 'click', () => this.setEditMode(false));
-		this.registerDomEvent(this.editModeButton, 'click', () => this.setEditMode(true));
+		this.registerDomEvent(this.previewModeButton, 'click', () => this.setPreviewMode('preview'));
+		this.registerDomEvent(this.editModeButton, 'click', () => this.setPreviewMode('edit'));
+		this.registerDomEvent(this.sourceModeButton, 'click', () => this.setPreviewMode('source-note'));
 		this.editorElement = preview.createDiv({ cls: 'ttrpg-card-forge__editor' });
 		this.editorElement.hidden = true;
 		this.cardHostElement = preview.createDiv({ cls: 'ttrpg-card-forge__card-host' });
 		this.diagnosticsElement = preview.createDiv({ cls: 'ttrpg-card-forge__diagnostics' });
-		const actions = preview.createDiv({ cls: 'ttrpg-card-forge__preview-actions' });
+		this.sourceNoteElement = preview.createDiv({
+			cls: 'ttrpg-card-forge__source-note',
+			attr: { 'aria-label': 'Original source note' },
+		});
+		this.sourceNoteElement.hidden = true;
+		this.sourceNoteContentElement = this.sourceNoteElement.createDiv({
+			cls: 'ttrpg-card-forge__source-note-content markdown-rendered',
+		});
+		const sourceActions = this.sourceNoteElement.createDiv({ cls: 'ttrpg-card-forge__source-note-actions' });
+		this.sourceNoteOpenButton = sourceActions.createEl('button', {
+			text: 'Open source note',
+			attr: { type: 'button' },
+		});
+		this.previewActionsElement = preview.createDiv({ cls: 'ttrpg-card-forge__preview-actions' });
+		const actions = this.previewActionsElement;
 		this.addToQueueButton = actions.createEl('button', {
 			text: 'Add to print queue',
 			cls: 'mod-cta',
@@ -473,30 +618,100 @@ export class CardForgeView extends ItemView {
 	}
 
 	private renderBrowser(): boolean {
-		if (!this.resultsElement || !this.totalCountElement || !this.filteredCountElement) {
+		if (!this.resultsElement || !this.filteredCountElement) {
 			return false;
 		}
 		const allItems = this.itemIndex.getItems();
-		const query = this.searchInput?.value.trim().toLocaleLowerCase() ?? '';
-		const visibleItems = query
-			? allItems.filter((item) => isSearchMatch(item, query))
-			: allItems;
-		this.totalCountElement.setText(formatItemCount(allItems.length));
-		this.filteredCountElement.setText(query ? `${visibleItems.length} results` : formatItemCount(visibleItems.length));
+		if (this.lastBrowserItems !== allItems) {
+			this.lastBrowserItems = allItems;
+			this.populateBrowserFilterOptions(allItems);
+		}
+		const filters = this.getBrowserFilters();
+		const visibleItems = filterIndexedItems(allItems, filters);
+		this.visibleBrowserItems = visibleItems;
+		const filtered = isItemBrowserFiltered(filters);
+		this.filteredCountElement.setText(formatBrowserResultCount(
+			visibleItems.length,
+			allItems.length,
+			filtered,
+		));
 
 		const selection = reconcileVisibleSelection(
 			this.selectedFilePath,
-			visibleItems.map((item) => item.filePath),
+			allItems.map((item) => item.filePath),
 		);
 		this.selectedFilePath = selection.selectedFilePath;
 		if (selection.selectionChanged) {
 			this.currentPageIndex = 0;
 		}
-		this.renderItemList(visibleItems, query);
+		this.renderItemList(visibleItems, filtered);
+		this.updateBatchToolbar();
+		this.resetFiltersButton?.toggleAttribute('disabled', !filtered);
 		return selection.selectionChanged;
 	}
 
-	private renderItemList(items: readonly ItemCardData[], query: string): void {
+	private populateBrowserFilterOptions(items: readonly ItemCardData[]): void {
+		const options = createItemBrowserFilterOptions(items);
+		for (const [select, nextOptions] of [
+			[this.typeFilterSelect, options.types],
+			[this.rarityFilterSelect, options.rarities],
+			[this.sourceFilterSelect, options.sources],
+		] as const) {
+			if (!select) {
+				continue;
+			}
+			const currentValue = select.value;
+			this.appendFilterOptions(select, nextOptions);
+			select.value = nextOptions.some((option) => option.value === currentValue)
+				? currentValue
+				: '';
+		}
+	}
+
+	private getBrowserFilters(): ItemBrowserFilters {
+		return {
+			query: this.searchInput?.value ?? DEFAULT_ITEM_BROWSER_FILTERS.query,
+			type: this.typeFilterSelect?.value ?? DEFAULT_ITEM_BROWSER_FILTERS.type,
+			rarity: this.rarityFilterSelect?.value ?? DEFAULT_ITEM_BROWSER_FILTERS.rarity,
+			source: this.sourceFilterSelect?.value ?? DEFAULT_ITEM_BROWSER_FILTERS.source,
+			attunement: (this.attunementFilterSelect?.value || 'all') as AttunementFilter,
+		};
+	}
+
+	private resetBrowserFilters(): void {
+		if (this.searchInput) {
+			this.searchInput.value = '';
+		}
+		for (const select of [
+			this.typeFilterSelect,
+			this.rarityFilterSelect,
+			this.sourceFilterSelect,
+			this.attunementFilterSelect,
+		]) {
+			if (select) {
+				select.value = '';
+			}
+		}
+		this.renderBrowser();
+	}
+
+	private updateBatchToolbar(): void {
+		const selectedCount = this.selectedBatchFilePaths.size;
+		this.batchSelectedCountElement?.setText(
+			`${selectedCount} ${selectedCount === 1 ? 'item' : 'items'} selected`,
+		);
+		if (this.addBatchButton) {
+			this.addBatchButton.disabled = selectedCount === 0;
+		}
+		if (this.clearBatchButton) {
+			this.clearBatchButton.disabled = selectedCount === 0;
+		}
+		if (this.selectAllFilteredButton) {
+			this.selectAllFilteredButton.disabled = this.visibleBrowserItems.length === 0;
+		}
+	}
+
+	private renderItemList(items: readonly ItemCardData[], filtered: boolean): void {
 		if (!this.resultsElement) {
 			return;
 		}
@@ -504,20 +719,41 @@ export class CardForgeView extends ItemView {
 		if (items.length === 0) {
 			this.resultsElement.createDiv({
 				cls: 'ttrpg-card-forge__empty',
-				text: query ? 'No indexed items match this search.' : 'No items are indexed. Check settings and rebuild the index.',
+				text: filtered
+					? 'No indexed items match the current search and filters.'
+					: 'No items are indexed. Check settings and rebuild the index.',
 			});
 			return;
 		}
 
 		for (const item of items) {
-			const isSelected = item.filePath === this.selectedFilePath;
-			const result = this.resultsElement.createEl('button', {
-				cls: `ttrpg-card-forge__result${isSelected ? ' is-selected' : ''}`,
-				attr: { type: 'button', role: 'option', 'aria-selected': isSelected ? 'true' : 'false' },
+			const isPreviewSelected = item.filePath === this.selectedFilePath;
+			const isBatchSelected = this.selectedBatchFilePaths.has(item.filePath);
+			const result = this.resultsElement.createDiv({
+				cls: [
+					'ttrpg-card-forge__result',
+					isPreviewSelected ? 'is-selected' : '',
+					isBatchSelected ? 'is-batch-selected' : '',
+				].filter(Boolean).join(' '),
+				attr: { role: 'listitem' },
 			});
 			result.dataset.filePath = item.filePath;
-			result.createDiv({ text: item.name, cls: 'ttrpg-card-forge__result-name' });
-			const metadata = result.createDiv({ cls: 'ttrpg-card-forge__result-metadata' });
+			const checkbox = result.createEl('input', {
+				type: 'checkbox',
+				cls: 'ttrpg-card-forge__result-checkbox',
+				attr: { 'aria-label': `Select ${item.name} for batch queue addition` },
+			});
+			checkbox.checked = isBatchSelected;
+			const content = result.createEl('button', {
+				cls: 'ttrpg-card-forge__result-content',
+				attr: {
+					type: 'button',
+					'aria-label': `Preview ${item.name}`,
+					'aria-pressed': String(isPreviewSelected),
+				},
+			});
+			content.createDiv({ text: item.name, cls: 'ttrpg-card-forge__result-name' });
+			const metadata = content.createDiv({ cls: 'ttrpg-card-forge__result-metadata' });
 			if (item.rarity) {
 				metadata.createSpan({ text: humanizeSlug(item.rarity) });
 			}
@@ -525,8 +761,21 @@ export class CardForgeView extends ItemView {
 			if (source) {
 				metadata.createSpan({ text: source });
 			}
-			result.addEventListener('click', () => this.selectItem(item.filePath));
-			result.addEventListener('dblclick', () => this.openItem(item));
+			checkbox.addEventListener('change', () => {
+				const next = applyItemBrowserInteraction({
+					previewFilePath: this.selectedFilePath,
+					selectedFilePaths: this.selectedBatchFilePaths,
+				}, {
+					kind: 'batch',
+					filePath: item.filePath,
+					selected: checkbox.checked,
+				});
+				this.selectedBatchFilePaths = new Set(next.selectedFilePaths);
+				result.toggleClass('is-batch-selected', checkbox.checked);
+				this.updateBatchToolbar();
+			});
+			content.addEventListener('click', () => this.selectItem(item.filePath));
+			content.addEventListener('dblclick', () => this.openItem(item));
 		}
 	}
 
@@ -542,9 +791,15 @@ export class CardForgeView extends ItemView {
 		this.renderPreview();
 	}
 
-	private setEditMode(editing: boolean): void {
-		this.isEditMode = editing;
+	private setPreviewMode(mode: PreviewMode): void {
+		const wasSourceNote = this.previewMode === 'source-note';
+		this.previewMode = mode;
 		this.renderEditor();
+		if (mode === 'source-note') {
+			void this.renderSourceNote();
+		} else if (wasSourceNote) {
+			this.renderPreview();
+		}
 	}
 
 	private resetEditorSession(): void {
@@ -565,15 +820,28 @@ export class CardForgeView extends ItemView {
 		if (!this.editorElement) {
 			return;
 		}
-		this.editorElement.hidden = !this.isEditMode;
-		this.editorElement.parentElement?.toggleClass('is-editing', this.isEditMode);
-		const modeState = createPreviewModeState(this.isEditMode);
+		const modeState = createPreviewModeState(this.previewMode);
+		this.editorElement.hidden = !modeState.showEditor;
+		this.cardHostElement?.toggleAttribute('hidden', !modeState.showCard);
+		this.diagnosticsElement?.toggleAttribute('hidden', !modeState.showCard);
+		this.sourceNoteElement?.toggleAttribute('hidden', !modeState.showSourceNote);
+		this.previewActionsElement?.toggleAttribute('hidden', !modeState.showGlobalPreviewActions);
+		this.previewIndicatorElement?.toggleAttribute('hidden', modeState.showSourceNote);
+		this.editorElement.parentElement?.toggleClass('is-editing', modeState.showEditor);
+		this.editorElement.parentElement?.toggleClass('is-source-note', modeState.showSourceNote);
 		this.previewModeButton?.toggleClass('is-active', modeState.previewActive);
 		this.editModeButton?.toggleClass('is-active', modeState.editActive);
+		this.sourceModeButton?.toggleClass('is-active', modeState.sourceActive);
 		this.previewModeButton?.setAttribute('aria-pressed', String(modeState.previewActive));
 		this.editModeButton?.setAttribute('aria-pressed', String(modeState.editActive));
+		this.sourceModeButton?.setAttribute('aria-pressed', String(modeState.sourceActive));
+		if (modeState.showSourceNote) {
+			this.pageNavigationElement?.toggleAttribute('hidden', true);
+		} else {
+			this.updatePageNavigation();
+		}
 		this.editorElement.empty();
-		if (!this.isEditMode) {
+		if (!modeState.showEditor) {
 			return;
 		}
 		const source = this.findSelectedItem();
@@ -638,7 +906,7 @@ export class CardForgeView extends ItemView {
 		this.appendTextEditor('Title', effective.item.name, (value) => this.updateDraft((draft) => {
 			draft.title = value;
 		}));
-		this.appendTextEditor('Type', effective.item.typeText ?? getEditableTypeText(effective.item), (value) => this.updateDraft((draft) => {
+		this.appendTextEditor('Type', effective.item.typeText ?? getItemBrowserTypeText(effective.item), (value) => this.updateDraft((draft) => {
 			draft.typeText = value || null;
 		}));
 		this.appendTextEditor('Rarity', effective.item.rarityText ?? (effective.item.rarity ? humanizeSlug(effective.item.rarity) : ''), (value) => this.updateDraft((draft) => {
@@ -1181,6 +1449,10 @@ export class CardForgeView extends ItemView {
 		if (!this.cardHostElement || !this.diagnosticsElement || !this.openSourceButton || !this.addToQueueButton) {
 			return;
 		}
+		if (this.previewMode === 'source-note') {
+			void this.renderSourceNote();
+			return;
+		}
 		if (!preserveExisting) {
 			this.cancelPreviewObservation();
 		}
@@ -1239,6 +1511,67 @@ export class CardForgeView extends ItemView {
 		}
 		this.setEditorStatus('Updating preview…');
 		void this.planAndRenderPreview(effective.item, lookup, generation, requestToken);
+	}
+
+	private async renderSourceNote(): Promise<void> {
+		if (!this.sourceNoteContentElement || !this.sourceNoteOpenButton) {
+			return;
+		}
+		const generation = ++this.sourceNoteGeneration;
+		const selectedFilePath = this.selectedFilePath;
+		this.sourceNoteContentElement.empty();
+		this.sourceNoteOpenButton.disabled = !selectedFilePath;
+		if (!selectedFilePath) {
+			this.sourceNoteContentElement.createDiv({
+				cls: 'ttrpg-card-forge__empty',
+				text: 'Select an item to inspect its original source note.',
+			});
+			return;
+		}
+		this.sourceNoteContentElement.createDiv({
+			cls: 'ttrpg-card-forge__source-note-status',
+			text: 'Loading source note…',
+		});
+		const result = await loadSourceNote(selectedFilePath, async (filePath) => {
+			const file = this.app.vault.getAbstractFileByPath(filePath);
+			return file instanceof TFile ? this.app.vault.cachedRead(file) : undefined;
+		});
+		if (
+			generation !== this.sourceNoteGeneration
+			|| this.previewMode !== 'source-note'
+			|| this.selectedFilePath !== selectedFilePath
+		) {
+			return;
+		}
+		if (result.status !== 'ready') {
+			this.sourceNoteContentElement.empty();
+			this.sourceNoteContentElement.createDiv({
+				cls: 'ttrpg-card-forge__empty is-warning',
+				text: result.message,
+			});
+			this.sourceNoteOpenButton.disabled = true;
+			return;
+		}
+
+		const rendered = createDiv();
+		await MarkdownRenderer.render(
+			this.app,
+			result.markdown,
+			rendered,
+			result.filePath,
+			this,
+		);
+		if (
+			generation !== this.sourceNoteGeneration
+			|| this.previewMode !== 'source-note'
+			|| this.selectedFilePath !== selectedFilePath
+		) {
+			return;
+		}
+		this.sourceNoteContentElement.empty();
+		while (rendered.firstChild) {
+			this.sourceNoteContentElement.appendChild(rendered.firstChild);
+		}
 	}
 
 	private async planAndRenderPreview(
@@ -1931,6 +2264,31 @@ export class CardForgeView extends ItemView {
 		}
 	}
 
+	private addBatchSelectionToQueue(): void {
+		const selection = resolveBatchSelection(
+			this.itemIndex.getItems(),
+			this.selectedBatchFilePaths,
+		);
+		if (selection.items.length === 0) {
+			new Notice(selection.missingFilePaths.length > 0
+				? `${selection.missingFilePaths.length} selected ${selection.missingFilePaths.length === 1 ? 'item could' : 'items could'} not be added.`
+				: 'Select at least one item to add.');
+			return;
+		}
+		const result = this.printQueue.addMany(selection.items.map((item) => ({
+			filePath: item.filePath,
+		})));
+		this.selectedBatchFilePaths = removeBatchSelections(
+			this.selectedBatchFilePaths,
+			selection.items.map((item) => item.filePath),
+		);
+		this.renderBrowser();
+		const failedCount = selection.missingFilePaths.length + result.rejected;
+		new Notice(failedCount > 0
+			? `Added ${result.entries.length} cards. ${failedCount} ${failedCount === 1 ? 'item could' : 'items could'} not be added.`
+			: `Added ${result.entries.length} ${result.entries.length === 1 ? 'card' : 'cards'} to the print queue.`);
+	}
+
 	private editQueueEntry(
 		entryId: string,
 		artworkMode?: Extract<ArtworkEditorMode, 'local' | 'https'>,
@@ -1957,7 +2315,7 @@ export class CardForgeView extends ItemView {
 		this.artworkHttpsUrl = '';
 		this.persistArtworkToVault = false;
 		this.syncDraftTemporaryArtworkReferences();
-		this.isEditMode = true;
+		this.previewMode = 'edit';
 		this.currentPageIndex = 0;
 		this.renderBrowser();
 		this.renderEditor();
@@ -1996,6 +2354,10 @@ export class CardForgeView extends ItemView {
 
 	private updatePageNavigation(): void {
 		if (!this.pageNavigationElement || !this.previousPageButton || !this.nextPageButton || !this.pageLabelElement) {
+			return;
+		}
+		if (this.previewMode === 'source-note') {
+			this.pageNavigationElement.hidden = true;
 			return;
 		}
 		const count = this.previewPages.length;
@@ -2129,41 +2491,11 @@ function formatArtworkDiagnostic(
 	return artworkResult?.status === 'not-rendered' ? 'Artwork omitted' : 'Artwork: loading';
 }
 
-function isSearchMatch(item: ItemCardData, query: string): boolean {
-	return [item.name, item.rarity, item.source, item.detail]
-		.filter((value): value is string => Boolean(value))
-		.some((value) => value.toLocaleLowerCase().includes(query));
-}
-
-function formatItemCount(count: number): string {
-	return `${count} ${count === 1 ? 'item' : 'items'}`;
-}
-
 function humanizeSlug(value: string): string {
 	return value
 		.split('-')
 		.map((part) => part ? `${part[0]?.toLocaleUpperCase()}${part.slice(1)}` : part)
 		.join(' ');
-}
-
-function getEditableTypeText(item: ItemCardData): string {
-	if (!item.detail) {
-		return '';
-	}
-	let depth = 0;
-	for (let index = 0; index < item.detail.length; index += 1) {
-		const character = item.detail[index];
-		if (character === '(') {
-			depth += 1;
-		} else if (character === ')') {
-			depth = Math.max(0, depth - 1);
-		} else if (character === ',' && depth === 0) {
-			return item.detail.slice(0, index).trim();
-		}
-	}
-	const detail = item.detail.trim();
-	const rarity = item.rarity ? humanizeSlug(item.rarity).toLocaleLowerCase() : '';
-	return rarity && detail.toLocaleLowerCase().startsWith(rarity) ? '' : detail;
 }
 
 function toTemporaryArtworkDescriptor(asset: TemporaryArtworkAsset): {

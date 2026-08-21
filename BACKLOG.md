@@ -1,10 +1,23 @@
 # TTRPG Card Forge backlog
 
-These ideas are intentionally outside the Phase 4B / 0.4.0 release scope.
+This file tracks completed workflow milestones and intentionally deferred work.
 
-## Source Note tab
+## Implemented in Phase 4C core
 
-Consider a read-only `Preview | Edit card | Source note` toggle inside Card Forge. The Source Note view would provide a fast CLI-first validation aid for comparing the generated card with its original Markdown without introducing any source mutation. The existing **Open source note** action should remain available for normal Obsidian navigation.
+- Multi-select item browser with path-based batch selection.
+- Indexed-metadata search and Type, Rarity, Source, and Attunement filters.
+- Deterministic **Add selected** queue workflow with one queue notification/persistence cycle.
+- Read-only `Preview | Edit card | Source note` navigation using the current vault file.
+- Context-aware actions that remove duplicate Preview actions while Edit or Source note is active.
+
+## Future Phase 4C follow-ups
+
+- Favorites.
+- Recently used items.
+- Saved print sets.
+- Export Gallery and saved-export management.
+- Queue-entry duplicate convenience.
+- Further Preview/Source navigation decisions after manual workflow testing.
 
 ## Dedicated bullet-marker troubleshooting
 

@@ -18,6 +18,16 @@ export interface PrintQueueHydrationResult {
 	repaired: boolean;
 }
 
+export interface PrintQueueAddInput {
+	filePath: string;
+	overrides?: CardOverrides;
+}
+
+export interface PrintQueueBatchAddResult {
+	entries: PrintQueueEntry[];
+	rejected: number;
+}
+
 export class PrintQueueService {
 	private entries: PrintQueueEntry[];
 	private readonly listeners = new Set<PrintQueueListener>();
@@ -42,6 +52,28 @@ export class PrintQueueService {
 	}
 
 	add(filePath: string, overrides?: CardOverrides): PrintQueueEntry {
+		const entry = this.addWithoutEmitting(filePath, overrides);
+		this.emit();
+		return entry;
+	}
+
+	addMany(inputs: readonly PrintQueueAddInput[]): PrintQueueBatchAddResult {
+		const entries: PrintQueueEntry[] = [];
+		let rejected = 0;
+		for (const input of inputs) {
+			if (!input.filePath.trim()) {
+				rejected += 1;
+				continue;
+			}
+			entries.push(this.addWithoutEmitting(input.filePath, input.overrides));
+		}
+		if (entries.length > 0) {
+			this.emit();
+		}
+		return { entries, rejected };
+	}
+
+	private addWithoutEmitting(filePath: string, overrides?: CardOverrides): PrintQueueEntry {
 		const normalizedPath = filePath.trim();
 		const normalizedOverrides = normalizeCardOverrides(overrides);
 		const existing = this.entries.find((entry) =>
@@ -49,7 +81,6 @@ export class PrintQueueService {
 			&& areCardOverridesEqual(entry.overrides, normalizedOverrides));
 		if (existing) {
 			existing.quantity += 1;
-			this.emit();
 			return existing;
 		}
 
@@ -63,7 +94,6 @@ export class PrintQueueService {
 			...(normalizedOverrides ? { overrides: normalizedOverrides } : {}),
 		};
 		this.entries.push(entry);
-		this.emit();
 		return entry;
 	}
 

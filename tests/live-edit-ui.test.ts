@@ -118,13 +118,32 @@ void test('preview toolbar chips are concise UI state and do not enter override 
 		{ label: 'Artwork missing', tone: 'warning' },
 	]);
 	assert.equal(createCardOverridesFingerprint(overrides), before);
-	assert.deepEqual(createPreviewModeState(false), {
+	assert.deepEqual(createPreviewModeState('preview'), {
 		previewActive: true,
 		editActive: false,
+		sourceActive: false,
+		showCard: true,
+		showEditor: false,
+		showSourceNote: false,
+		showGlobalPreviewActions: true,
 	});
-	assert.deepEqual(createPreviewModeState(true), {
+	assert.deepEqual(createPreviewModeState('edit'), {
 		previewActive: false,
 		editActive: true,
+		sourceActive: false,
+		showCard: true,
+		showEditor: true,
+		showSourceNote: false,
+		showGlobalPreviewActions: false,
+	});
+	assert.deepEqual(createPreviewModeState('source-note'), {
+		previewActive: false,
+		editActive: false,
+		sourceActive: true,
+		showCard: false,
+		showEditor: false,
+		showSourceNote: true,
+		showGlobalPreviewActions: false,
 	});
 });
 
