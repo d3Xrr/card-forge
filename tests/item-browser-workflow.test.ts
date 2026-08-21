@@ -178,6 +178,11 @@ void test('browser controls are semantic, compact, responsive, and isolated from
 	assert.match(view, /text: 'Select all filtered'/u);
 	assert.match(view, /this\.printQueue\.addMany/u);
 	assert.match(view, /cls: 'dropdown ttrpg-card-forge__filter-select'/u);
+	assert.match(
+		view,
+		/select\.createEl\('option', \{ value: option\.value, text: option\.label \}\)/u,
+	);
+	assert.doesNotMatch(view, /select\.createEl\('option', option\)/u);
 	assert.match(css, /ttrpg-card-forge__batch-actions[^}]*flex-wrap:\s*wrap/isu);
 	assert.match(css, /ttrpg-card-forge__filters[^}]*repeat\(2,\s*minmax\(0,\s*1fr\)\)/isu);
 	assert.match(css, /max-width:\s*420px[\s\S]*ttrpg-card-forge__filters[^}]*minmax\(0,\s*1fr\)/iu);
@@ -192,6 +197,7 @@ void test('filter dropdown styling uses scoped Obsidian theme variables', () => 
 	assert.match(selectRule, /background-color:\s*var\(--background-modifier-form-field\)/u);
 	assert.match(optionRule, /color:\s*var\(--text-normal\)/u);
 	assert.match(optionRule, /background-color:\s*var\(--background-primary\)/u);
+	assert.match(optionRule, /-webkit-text-fill-color:\s*var\(--text-normal\)/u);
 	assert.match(css, /\.theme-dark \.ttrpg-card-forge__filter-select[^}]*color-scheme:\s*dark/su);
 	assert.match(css, /\.theme-light \.ttrpg-card-forge__filter-select[^}]*color-scheme:\s*light/su);
 	assert.doesNotMatch(css, /(^|\})\s*(select|option)\s*\{/mu);

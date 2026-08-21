@@ -488,7 +488,7 @@ export class CardForgeView extends ItemView {
 		select.empty();
 		select.createEl('option', { text: 'All', value: '' });
 		for (const option of options) {
-			select.createEl('option', option);
+			select.createEl('option', { value: option.value, text: option.label });
 		}
 	}
 
