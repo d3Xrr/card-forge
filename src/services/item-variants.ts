@@ -12,8 +12,9 @@ import {
 export interface ItemCardVariant {
 	id: string;
 	label: string;
+	displayLabel: string;
 	baseName?: string;
-	baseItem?: ItemCardData;
+	resolvedBaseItem?: ItemCardData;
 	sectionMarkdown: string;
 	item: ItemCardData;
 }
@@ -30,7 +31,9 @@ export function discoverItemVariants(
 	if (!marker) {
 		return [];
 	}
-	const magicRules = source.description.slice(0, marker.index).trim();
+	const familyRules = partitionVariantFamilyRules(
+		source.description.slice(0, marker.index).trim(),
+	);
 	const variantRegion = source.description.slice(marker.index + marker[0].length);
 	const headings = [...variantRegion.matchAll(VARIANT_HEADING)];
 	const variants: ItemCardVariant[] = [];
@@ -43,38 +46,47 @@ export function discoverItemVariants(
 		const sectionEnd = headings[index + 1]?.index ?? variantRegion.length;
 		const sectionMarkdown = variantRegion.slice(sectionStart, sectionEnd).trim();
 		const inferredBaseName = inferVariantBaseName(source.name, label);
-		const baseItem = resolveVariantBaseItem(
+		const resolvedBaseItem = resolveVariantBaseItem(
 			source,
 			label,
 			inferredBaseName,
 			indexedItems,
 		);
-		const baseName = baseItem?.name ?? inferredBaseName;
+		const displayLabel = resolvedBaseItem?.name
+			?? deriveVariantFamilyDisplayLabel(source.name, label)
+			?? inferredBaseName
+			?? label;
+		const baseName = resolvedBaseItem?.name ?? inferredBaseName;
 		const parsed = parseVariantSection(sectionMarkdown);
-		const inheritedStats = baseItem
-			? inheritMissingBaseStats(source, baseItem)
+		const inheritedStats = resolvedBaseItem
+			? inheritMissingBaseStats(source, resolvedBaseItem)
 			: {};
-		const typeText = getSemanticItemTypeText(baseItem ?? source);
+		const typeText = getSemanticItemTypeText(resolvedBaseItem ?? source);
 		const rarityText = source.rarityText
 			?? (source.rarity ? formatItemRarity(source.rarity) : '');
 		const attunementText = getSourceAttunementText(source);
 		const structuredFieldOrigins = createVariantFieldOrigins(
 			source,
-			baseItem,
+			resolvedBaseItem,
 			inheritedStats,
 			parsed.stats,
 			typeText,
 			rarityText,
 			attunementText,
 		);
-		const description = [magicRules, parsed.rulesMarkdown]
+		const description = [
+			familyRules.mainMarkdown,
+			parsed.rulesMarkdown,
+			familyRules.craftingMarkdown,
+		]
 			.filter(Boolean)
 			.join('\n\n');
 		variants.push({
 			id: createVariantId(label),
 			label,
+			displayLabel,
 			...(baseName ? { baseName } : {}),
-			...(baseItem ? { baseItem } : {}),
+			...(resolvedBaseItem ? { resolvedBaseItem } : {}),
 			sectionMarkdown,
 			item: {
 				...source,
@@ -104,7 +116,10 @@ function resolveVariantBaseItem(
 	const normalizedLabel = normalizeLookupName(label);
 	const labelWithoutBonus = stripMagicBonus(normalizedLabel);
 	return items
-		.filter((item) => item.filePath !== source.filePath)
+		.filter((item) =>
+			item.filePath !== source.filePath
+			&& !isGenericVariantFamily(item),
+		)
 		.map((item) => ({ item, score: scoreBaseCandidate(
 			item,
 			inferred,
@@ -125,7 +140,7 @@ export function selectItemVariant(
 
 /** Concise UI label only; variant identity and generated item title are unchanged. */
 export function getVariantDisplayLabel(variant: ItemCardVariant): string {
-	return variant.baseItem?.name ?? variant.label;
+	return variant.displayLabel;
 }
 
 export function createVariantId(label: string): string {
@@ -150,9 +165,61 @@ export function inferVariantBaseName(sourceName: string, variantLabel: string): 
 	return undefined;
 }
 
+export function deriveVariantFamilyDisplayLabel(
+	sourceName: string,
+	variantLabel: string,
+): string | undefined {
+	const source = sourceName.trim();
+	const label = variantLabel.trim();
+	const familyToken = /\b(?:weapon|armor)\b/iu.exec(source);
+	if (!familyToken || familyToken.index === undefined) {
+		return undefined;
+	}
+	const prefix = source.slice(0, familyToken.index);
+	const suffix = source.slice(familyToken.index + familyToken[0].length);
+	if (
+		!startsWithIgnoreCase(label, prefix)
+		|| !endsWithIgnoreCase(label, suffix)
+		|| label.length < prefix.length + suffix.length
+	) {
+		return undefined;
+	}
+	const end = suffix.length > 0 ? label.length - suffix.length : label.length;
+	const replacement = label.slice(prefix.length, end).trim();
+	return replacement && normalizeLookupName(replacement) !== normalizeLookupName(familyToken[0])
+		? replacement
+		: undefined;
+}
+
 interface ParsedVariantSection {
 	rulesMarkdown: string;
 	stats: Partial<ItemCardData>;
+}
+
+function partitionVariantFamilyRules(markdown: string): {
+	mainMarkdown: string;
+	craftingMarkdown: string;
+} {
+	const headings = [...markdown.matchAll(/^##(?!#)\s+(.+?)\s*#*\s*$/gmu)];
+	const craftingIndex = headings.findIndex(
+		(heading) => heading[1]?.trim().toLocaleLowerCase() === 'crafting',
+	);
+	if (craftingIndex < 0) {
+		return { mainMarkdown: markdown.trim(), craftingMarkdown: '' };
+	}
+	const craftingStart = headings[craftingIndex]?.index;
+	if (craftingStart === undefined) {
+		return { mainMarkdown: markdown.trim(), craftingMarkdown: '' };
+	}
+	const craftingEnd = headings[craftingIndex + 1]?.index ?? markdown.length;
+	const mainMarkdown = [
+		markdown.slice(0, craftingStart).trim(),
+		markdown.slice(craftingEnd).trim(),
+	].filter(Boolean).join('\n\n');
+	return {
+		mainMarkdown,
+		craftingMarkdown: markdown.slice(craftingStart, craftingEnd).trim(),
+	};
 }
 
 function parseVariantSection(markdown: string): ParsedVariantSection {
@@ -335,9 +402,24 @@ function scoreBaseCandidate(
 	if (matchScore === 0) {
 		return 0;
 	}
-	const mundaneBonus = item.rarity ? 0 : 200;
+	const mundaneBonus = !item.rarity || normalizeLookupName(item.rarity) === 'none'
+		? 200
+		: 0;
 	const equipmentBonus = /^(?:weapon|armor)\b/iu.test(getSemanticItemTypeText(item)) ? 20 : 0;
 	return matchScore + mundaneBonus + equipmentBonus + candidate.length / 1000;
+}
+
+function isGenericVariantFamily(item: ItemCardData): boolean {
+	return item.rawTags.some((tag) => /\/wondrous\/generic-variant$/iu.test(tag));
+}
+
+function startsWithIgnoreCase(value: string, prefix: string): boolean {
+	return value.slice(0, prefix.length).toLocaleLowerCase() === prefix.toLocaleLowerCase();
+}
+
+function endsWithIgnoreCase(value: string, suffix: string): boolean {
+	return suffix.length === 0
+		|| value.slice(-suffix.length).toLocaleLowerCase() === suffix.toLocaleLowerCase();
 }
 
 function stripMagicBonus(value: string): string {

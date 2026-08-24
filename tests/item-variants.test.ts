@@ -10,6 +10,12 @@ import {
 import { applyCardOverrides } from '../src/services/card-overrides';
 import { buildItemStatRows } from '../src/renderer/structured-item-stats';
 import { getStructuredItemFieldOrigin } from '../src/models/item';
+import { planItemCardPages } from '../src/renderer/item-card-planner';
+import {
+	parseSemanticMarkdown,
+	partitionCraftingSection,
+	serializeSemanticMarkdown,
+} from '../src/renderer/semantic-markdown';
 
 function item(name: string, description = ''): ItemCardData {
 	return { filePath: `items/${name}.md`, name, description, hasImage: false, rawTags: [] };
@@ -83,7 +89,7 @@ void test('resolves a base item generically when a variant adds a trailing magic
 		'- **Weight**: 20 lb.',
 	].join('\n'));
 	const variant = discoverItemVariants(source, [source, magicNameDecoy, base])[0];
-	assert.equal(variant?.baseItem, base);
+	assert.equal(variant?.resolvedBaseItem, base);
 	assert.equal(variant?.baseName, 'Breastplate');
 	assert.equal(variant?.item.name, '+1 Breastplate of Cold Resistance');
 });
@@ -166,7 +172,7 @@ void test('uses resolved base names only for concise selector presentation', () 
 	assert.equal(getVariantDisplayLabel(fallback), 'Unresolved Ceremonial Form');
 });
 
-void test('selector labels fall back to headings when a base name is only inferred', () => {
+void test('safe family wrappers provide concise selector labels without fabricating bases', () => {
 	const source = item('+1 Armor', [
 		'Rules',
 		'**Variants**:',
@@ -176,8 +182,29 @@ void test('selector labels fall back to headings when a base name is only inferr
 	const variant = discoverItemVariants(source, [source])[0];
 	assert.ok(variant);
 	assert.equal(variant.baseName, 'Mythril Weave');
-	assert.equal(variant.baseItem, undefined);
-	assert.equal(getVariantDisplayLabel(variant), '+1 Mythril Weave');
+	assert.equal(variant.resolvedBaseItem, undefined);
+	assert.equal(getVariantDisplayLabel(variant), 'Mythril Weave');
+});
+
+void test('indexed +1 Weapon variants prefer the canonical mundane base label', () => {
+	const warhammer = {
+		...item('Warhammer'),
+		detail: 'Martial melee weapon',
+		rarity: 'none',
+	};
+	const source = {
+		...item('+1 Weapon', [
+			'Magic bonus rule.',
+			'**Variants**:',
+			'### +1 Warhammer',
+		].join('\n')),
+		rarity: 'uncommon',
+	};
+	const variant = discoverItemVariants(source, [source, warhammer])[0];
+	assert.ok(variant);
+	assert.equal(variant.resolvedBaseItem, warhammer);
+	assert.equal(getVariantDisplayLabel(variant), 'Warhammer');
+	assert.equal(variant.item.name, '+1 Warhammer');
 });
 
 void test('real +1 Yklwa shape keeps generic Weapon type separate from Uncommon rarity', () => {
@@ -197,7 +224,9 @@ void test('real +1 Yklwa shape keeps generic Weapon type separate from Uncommon 
 	};
 	const variant = discoverItemVariants(source, [source])[0];
 	assert.ok(variant);
-	assert.equal(variant.baseItem, undefined);
+	assert.equal(variant.resolvedBaseItem, undefined);
+	assert.equal(getVariantDisplayLabel(variant), 'Yklwa');
+	assert.equal(variant.item.name, '+1 Yklwa');
 	assert.equal(variant.item.typeText, 'Weapon');
 	assert.equal(variant.item.rarityText, 'Uncommon');
 	assert.equal(variant.item.damage, '1d8 piercing');
@@ -275,6 +304,7 @@ void test('Armor of Cold Resistance uses canonical base labels and base provenan
 		'Chain Shirt',
 		'Half Plate Armor',
 		'Hide Armor',
+		'Leather Armor',
 		'Padded Armor',
 		'Plate Armor',
 		'Ring Mail',
@@ -285,15 +315,21 @@ void test('Armor of Cold Resistance uses canonical base labels and base provenan
 	const bases = baseNames.map((name, index) => ({
 		...item(name),
 		detail: 'Armor',
+		rarity: 'none',
 		cost: `${10 + index} gp`,
 		weight: 20 + index,
 	}));
+	const genericFamilyDecoy = {
+		...item('Armor of Cold Resistance'),
+		rarity: 'rare',
+		rawTags: ['ttrpg-cli/item/wondrous/generic-variant'],
+	};
 	const source = {
-		...item('Armor of Cold Resistance', [
+		...item('+1 Armor of Cold Resistance', [
 			'Magic resistance rule.',
 			'**Variants**:',
 			...baseNames.flatMap((name) => [
-				`### ${name} of Cold Resistance`,
+				`### +1 ${name} of Cold Resistance`,
 				'- **Armor Class**: source value',
 			]),
 		].join('\n')),
@@ -301,9 +337,12 @@ void test('Armor of Cold Resistance uses canonical base labels and base provenan
 		rarity: 'rare',
 		attunement: true,
 	};
-	const variants = discoverItemVariants(source, [source, ...bases]);
+	const variants = discoverItemVariants(source, [source, genericFamilyDecoy, ...bases]);
 	assert.deepEqual(variants.map(getVariantDisplayLabel), [...baseNames]);
-	for (const variant of variants) {
+	for (const [index, variant] of variants.entries()) {
+		assert.equal(variant.label, `+1 ${baseNames[index]} of Cold Resistance`);
+		assert.equal(variant.item.name, variant.label);
+		assert.equal(variant.resolvedBaseItem, bases[index]);
 		assert.equal(variant.item.rarityText, 'Rare');
 		assert.equal(variant.item.attunementText, 'Requires attunement');
 		assert.equal(getStructuredItemFieldOrigin(variant.item, 'cost'), 'base');
@@ -312,23 +351,141 @@ void test('Armor of Cold Resistance uses canonical base labels and base provenan
 	}
 });
 
-void test("Monster Hunter's Weapon selectors use concise resolved bases without changing titles", () => {
-	const baseNames = ['Dagger', 'Halberd', 'Heavy Crossbow', 'Hunting Rifle'] as const;
-	const bases = baseNames.map((name) => ({ ...item(name), detail: 'Weapon' }));
+void test('unindexed armor forms use the family wrapper without resolving a magic family as their base', () => {
+	const source = {
+		...item('+1 Armor of Cold Resistance', [
+			'Magic resistance rule.',
+			'**Variants**:',
+			'### +1 Spiked Armor of Cold Resistance',
+			'- **Armor Class**: source value',
+		].join('\n')),
+		rawTags: ['ttrpg-cli/item/wondrous/generic-variant'],
+	};
+	const familyDecoy = {
+		...item('Armor of Cold Resistance'),
+		rarity: 'rare',
+		rawTags: ['ttrpg-cli/item/wondrous/generic-variant'],
+	};
+	const variant = discoverItemVariants(source, [source, familyDecoy])[0];
+	assert.ok(variant);
+	assert.equal(variant.resolvedBaseItem, undefined);
+	assert.equal(getVariantDisplayLabel(variant), 'Spiked Armor');
+	assert.equal(variant.item.name, '+1 Spiked Armor of Cold Resistance');
+});
+
+void test("Monster Hunter's Weapon selectors cover indexed and unindexed bases without changing titles", () => {
+	const labels = [
+		'Halberd',
+		'Hooked Shortspear',
+		'Hoopak',
+		'Light Repeating Crossbow',
+	] as const;
+	const indexedHalberd = { ...item('Halberd'), detail: 'Weapon', rarity: 'none' };
 	const source = item("Monster Hunter's Weapon +1", [
 		'Magic hunter rules.',
 		'**Variants**:',
-		...baseNames.flatMap((name) => [
+		...labels.flatMap((name) => [
 			`### Monster Hunter's ${name} +1`,
 			'- **Damage**: 1d8 piercing',
 		]),
 	].join('\n'));
-	const variants = discoverItemVariants(source, [source, ...bases]);
-	assert.deepEqual(variants.map(getVariantDisplayLabel), [...baseNames]);
+	const variants = discoverItemVariants(source, [source, indexedHalberd]);
+	assert.deepEqual(variants.map(getVariantDisplayLabel), [...labels]);
+	assert.equal(variants[0]?.resolvedBaseItem, indexedHalberd);
+	for (const variant of variants.slice(1)) {
+		assert.equal(variant.resolvedBaseItem, undefined);
+	}
 	assert.deepEqual(
 		variants.map((variant) => variant.item.name),
-		baseNames.map((name) => `Monster Hunter's ${name} +1`),
+		labels.map((name) => `Monster Hunter's ${name} +1`),
 	);
+});
+
+void test('variant equipment rows leave Crafting while actual components remain Crafting', () => {
+	const plate = { ...item('Plate Armor'), detail: 'Heavy armor', rarity: 'none', weight: 65 };
+	const chainMail = { ...item('Chain Mail'), detail: 'Heavy armor', rarity: 'none', weight: 55 };
+	const source = {
+		...item('Inexhaustible Armor', [
+			'Main magic rules.',
+			'## Crafting',
+			'Creating this item requires a specialized workshop.',
+			'- **Component Alpha.** First actual crafting component.',
+			'- **Component Beta.** Second actual crafting component.',
+			'- **Component Gamma.** Third actual crafting component.',
+			'- **Component Delta.** Fourth actual crafting component.',
+			'**Variants**:',
+			'### Inexhaustible Plate Armor',
+			'- **Armor Class**: 18',
+			'- **Strength**: Requires 15 STR.',
+			'- **Stealth**: The wearer has disadvantage.',
+			'- **Weight**: 65 lbs.',
+			'### Inexhaustible Chain Mail',
+			'- **Armor Class**: 16',
+			'- **Strength**: Requires 13 STR.',
+			'- **Stealth**: The wearer has disadvantage.',
+			'- **Weight**: 55 lbs.',
+		].join('\n')),
+		detail: 'Very rare (requires attunement by a fighter)',
+		rarity: 'very-rare',
+		attunement: true,
+	};
+	const variants = discoverItemVariants(source, [source, plate, chainMail]);
+	assert.deepEqual(variants.map(getVariantDisplayLabel), ['Plate Armor', 'Chain Mail']);
+	for (const variant of variants) {
+		const sections = partitionCraftingSection(parseSemanticMarkdown(variant.item.description));
+		const mainMarkdown = serializeSemanticMarkdown(sections.main);
+		const craftingMarkdown = serializeSemanticMarkdown(sections.crafting);
+		assert.match(mainMarkdown, /Armor Class/iu);
+		assert.match(mainMarkdown, /Strength/iu);
+		assert.match(mainMarkdown, /Stealth/iu);
+		assert.doesNotMatch(craftingMarkdown, /Armor Class|Strength|Stealth/iu);
+		assert.match(craftingMarkdown, /Component Alpha/iu);
+
+		const pages = planItemCardPages(variant.item, {
+			artworkAvailable: false,
+			capacityScale: 0.55,
+		});
+		const craftingPages = pages.filter((page) => page.kind === 'crafting');
+		assert.ok(craftingPages.length > 0);
+		assert.doesNotMatch(
+			serializeSemanticMarkdown(craftingPages.flatMap((page) => page.blocks)),
+			/Armor Class|Strength|Stealth/iu,
+		);
+	}
+
+	const unrelated = partitionCraftingSection(parseSemanticMarkdown([
+		'Normal rules.',
+		'## Crafting',
+		'Only a separate recipe belongs here.',
+	].join('\n')));
+	assert.equal(serializeSemanticMarkdown(unrelated.main), 'Normal rules.');
+	assert.match(serializeSemanticMarkdown(unrelated.crafting), /Only a separate recipe/iu);
+});
+
+void test('unrelated crafting-heavy items retain their existing semantic split', () => {
+	const armor = item('Armor of Invulnerability', [
+		'The armor protects its wearer from mundane harm.',
+		'## Crafting',
+		'- **Adamantine.** A worked plate of the rare metal.',
+		'- **Catalyst.** A separate magical reagent.',
+		'- **Essence.** A third recipe component.',
+	].join('\n'));
+	const sections = partitionCraftingSection(parseSemanticMarkdown(armor.description));
+	assert.equal(
+		serializeSemanticMarkdown(sections.main),
+		'The armor protects its wearer from mundane harm.',
+	);
+	assert.match(serializeSemanticMarkdown(sections.crafting), /Adamantine/iu);
+
+	const pages = planItemCardPages(armor, {
+		artworkAvailable: false,
+		capacityScale: 0.4,
+	});
+	const craftingMarkdown = serializeSemanticMarkdown(
+		pages.filter((page) => page.kind === 'crafting').flatMap((page) => page.blocks),
+	);
+	assert.match(craftingMarkdown, /Adamantine/iu);
+	assert.doesNotMatch(craftingMarkdown, /protects its wearer/iu);
 });
 
 void test('inherited mundane Cost stays editable but is hidden until explicitly overridden', () => {
