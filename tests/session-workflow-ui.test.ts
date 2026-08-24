@@ -21,6 +21,8 @@ void test('registers both current-item commands and persists Saved Print Sets', 
 	assert.match(main, /id: 'add-current-item-to-print-queue'[\s\S]*name: 'Add current item to print queue'/u);
 	assert.match(main, /savedPrintSets: this\.savedPrintSets\.serialize\(\)/u);
 	assert.match(main, /new SavedPrintSetService\(saved\.savedPrintSets\)/u);
+	assert.match(main, /activeSavedSetId: this\.savedPrintSetSession\.activeSavedSetId \?\? null/u);
+	assert.match(main, /savedPrintSetSession\.restore\([\s\S]*saved\.activeSavedSetId/u);
 });
 
 void test('Open current item reuses activation and selects Preview without queue or filter mutation', () => {
@@ -98,34 +100,55 @@ void test('successful Saved Set load activates it and returns directly to Print 
 		'private async renameSavedPrintSet',
 	);
 	assert.match(load, /result\.status !== 'loaded'/u);
-	assert.match(load, /savedPrintSetSession\.activate\(result\.set\.id, this\.printQueue\.getEntries\(\)\)/u);
+	assert.match(load, /savedPrintSetSession\.activate\(result\.set\.id, result\.set\.entries\)/u);
 	assert.match(load, /setWorkflowMode\('queue'\)/u);
 	const failedLoad = load.slice(0, load.indexOf("if (result.status !== 'loaded')"));
 	assert.doesNotMatch(failedLoad, /setWorkflowMode\('queue'\)/u);
 });
 
-void test('active-set actions expose Save, Save As, status, Clear, and session-local state', () => {
+void test('active-set actions expose Save, Save As, status, Clear, and persisted validated state', () => {
 	assert.match(main, /readonly savedPrintSetSession = new SavedPrintSetSession\(\)/u);
-	assert.doesNotMatch(main, /activeSavedSetId:[\s\S]*saveData/u);
+	assert.match(main, /activeSavedSetId: saved\?\.activeSavedSetId/u);
+	assert.match(main, /activeSavedSetRestore === 'invalid'/u);
+	assert.match(main, /unsubscribeFromSavedPrintSetSession/u);
 	assert.match(view, /'Unsaved print queue'/u);
 	assert.match(view, /\$\{state\.activeSet\.name\}\$\{state\.dirty \? ' · Modified' : ''\}/u);
 	assert.match(view, /private async saveActivePrintSet/u);
-	assert.match(view, /savedPrintSets\.update\(state\.activeSet\.id, entries\)/u);
+	assert.match(view, /savedPrintSets\.update\(state\.activeSet\.id, prepared\.entries\)/u);
 	assert.match(view, /private async saveCurrentQueueAsNewSet/u);
-	assert.match(view, /savedPrintSetSession\.activate\(result\.set\.id, queueSnapshot\)/u);
+	assert.match(view, /savedPrintSetSession\.activate\(result\.set\.id, result\.set\.entries\)/u);
 	assert.match(view, /savedPrintSetSession\.clear\(\)[\s\S]*printQueue\.clear\(\)/u);
 	assert.match(view, /printQueue\.getEntries\(\)\.length === 0[\s\S]*!this\.savedPrintSetSession\.activeSavedSetId/u);
 	assert.match(view, /active-set-badge[\s\S]*text: 'Active'/u);
 });
 
-void test('Saved Set artwork is prepared before logical mutation and live queue artwork stays unchanged', () => {
+void test('Saved Set artwork is prepared before logical mutation and promoted in the live queue', () => {
 	const save = methodBody(view, 'private async saveActivePrintSet', 'private async saveCurrentQueueAsNewSet');
 	const saveAs = methodBody(view, 'private async saveCurrentQueueAsNewSet', 'private snapshotCurrentQueue');
 	assert.ok(save.indexOf('prepareCurrentQueueForSavedSet') < save.indexOf('savedPrintSets.update'));
 	assert.ok(saveAs.indexOf('prepareCurrentQueueForSavedSet') < saveAs.indexOf('savedPrintSets.save'));
+	assert.match(save, /printQueue\.promoteTemporaryArtworkReferences\(prepared\.temporaryArtworkPaths\)/u);
+	assert.match(saveAs, /printQueue\.promoteTemporaryArtworkReferences\(prepared\.temporaryArtworkPaths\)/u);
 	assert.doesNotMatch(`${save}\n${saveAs}`, /printQueue\.updateOverrides|replaceWithSnapshots/u);
 	assert.match(view, /Replace missing artwork before saving this print set\./u);
 	assert.match(view, /cardForgeAssetsFolder/u);
+});
+
+void test('Saved Set load confirmation is conditional on canonical replacement risk', () => {
+	const load = methodBody(
+		view,
+		'private async loadSavedPrintSet',
+		'private async renameSavedPrintSet',
+	);
+	assert.match(load, /getSavedPrintSetLoadRisk/u);
+	assert.match(load, /replacementRisk === 'none'/u);
+	assert.match(load, /replacementRisk === 'modified-active-set'/u);
+	assert.match(load, /has unsaved changes\. Loading/u);
+	assert.match(load, /replace the unsaved current print queue/u);
+	assert.match(load, /if \(!replace\) \{\s*return;/u);
+	const cancelIndex = load.indexOf('if (!replace)');
+	const activationIndex = load.indexOf('savedPrintSetSession.activate');
+	assert.ok(cancelIndex >= 0 && cancelIndex < activationIndex);
 });
 
 void test('queue Duplicate, Edit, and Remove are compact accessible Lucide icon buttons', () => {

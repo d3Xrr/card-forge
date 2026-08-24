@@ -18,6 +18,7 @@ export type PreparedSavedPrintSetEntries =
 		status: 'ready';
 		entries: PrintQueueEntrySnapshot[];
 		persistedArtworkCount: number;
+		temporaryArtworkPaths: ReadonlyMap<string, string>;
 	}
 	| { status: 'missing-artwork'; temporaryArtworkId: string };
 
@@ -58,6 +59,7 @@ export async function prepareSavedPrintSetEntries(
 		status: 'ready',
 		entries: snapshots.map((entry) => replaceTemporaryArtwork(entry, vaultPaths)),
 		persistedArtworkCount: vaultPaths.size,
+		temporaryArtworkPaths: vaultPaths,
 	};
 }
 

@@ -163,6 +163,31 @@ export class PrintQueueService {
 		return true;
 	}
 
+	promoteTemporaryArtworkReferences(
+		vaultPaths: ReadonlyMap<string, string>,
+	): number {
+		let changed = 0;
+		for (const entry of this.entries) {
+			const artwork = entry.overrides?.artwork;
+			if (artwork?.kind !== 'temporary') {
+				continue;
+			}
+			const path = vaultPaths.get(artwork.id)?.trim();
+			if (!path) {
+				continue;
+			}
+			entry.overrides = {
+				...entry.overrides,
+				artwork: { kind: 'vault', path },
+			};
+			changed += 1;
+		}
+		if (changed > 0) {
+			this.emit();
+		}
+		return changed;
+	}
+
 	increment(id: string): void {
 		const entry = this.getEntry(id);
 		if (!entry) {

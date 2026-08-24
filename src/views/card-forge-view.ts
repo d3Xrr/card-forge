@@ -142,8 +142,14 @@ import {
 	type ExportGalleryFileInfo,
 } from '../services/export-gallery';
 import { normalizeExportFolder } from '../export/vault-pdf-storage';
-import { prepareSavedPrintSetEntries } from '../services/saved-print-set-artwork';
-import type { SavedPrintSetSession } from '../services/saved-print-set-session';
+import {
+	prepareSavedPrintSetEntries,
+	type PreparedSavedPrintSetEntries,
+} from '../services/saved-print-set-artwork';
+import {
+	getSavedPrintSetLoadRisk,
+	type SavedPrintSetSession,
+} from '../services/saved-print-set-session';
 import {
 	confirmWorkflowAction,
 	promptForText,
@@ -820,16 +826,17 @@ export class CardForgeView extends ItemView {
 			return;
 		}
 		const queueSnapshot = this.snapshotCurrentQueue();
-		const entries = await this.prepareCurrentQueueForSavedSet(queueSnapshot);
-		if (!entries) {
+		const prepared = await this.prepareCurrentQueueForSavedSet(queueSnapshot);
+		if (!prepared) {
 			return;
 		}
-		const result = this.savedPrintSets.update(state.activeSet.id, entries);
+		const result = this.savedPrintSets.update(state.activeSet.id, prepared.entries);
 		if (result.status !== 'updated') {
 			new Notice('That saved print set is no longer available.');
 			return;
 		}
-		this.savedPrintSetSession.activate(result.set.id, queueSnapshot);
+		this.printQueue.promoteTemporaryArtworkReferences(prepared.temporaryArtworkPaths);
+		this.savedPrintSetSession.activate(result.set.id, result.set.entries);
 		this.updateActiveSavedSetPresentation();
 		new Notice(`Saved print set “${result.set.name}”.`);
 	}
@@ -866,15 +873,16 @@ export class CardForgeView extends ItemView {
 			}
 		}
 		const queueSnapshot = this.snapshotCurrentQueue();
-		const entries = await this.prepareCurrentQueueForSavedSet(queueSnapshot);
-		if (!entries) {
+		const prepared = await this.prepareCurrentQueueForSavedSet(queueSnapshot);
+		if (!prepared) {
 			return;
 		}
-		const result = this.savedPrintSets.save(normalizedName, entries, Boolean(existing));
+		const result = this.savedPrintSets.save(normalizedName, prepared.entries, Boolean(existing));
 		if (result.status !== 'created' && result.status !== 'replaced') {
 			return;
 		}
-		this.savedPrintSetSession.activate(result.set.id, queueSnapshot);
+		this.printQueue.promoteTemporaryArtworkReferences(prepared.temporaryArtworkPaths);
+		this.savedPrintSetSession.activate(result.set.id, result.set.entries);
 		this.updateActiveSavedSetPresentation();
 		new Notice(`Saved print set “${result.set.name}”.`);
 	}
@@ -885,7 +893,7 @@ export class CardForgeView extends ItemView {
 
 	private async prepareCurrentQueueForSavedSet(
 		queueSnapshot: readonly PrintQueueEntrySnapshot[],
-	): Promise<PrintQueueEntrySnapshot[] | undefined> {
+	): Promise<Extract<PreparedSavedPrintSetEntries, { status: 'ready' }> | undefined> {
 		try {
 			const prepared = await prepareSavedPrintSetEntries(
 				queueSnapshot,
@@ -897,7 +905,7 @@ export class CardForgeView extends ItemView {
 				new Notice('Replace missing artwork before saving this print set.');
 				return undefined;
 			}
-			return prepared.entries;
+			return prepared;
 		} catch (error) {
 			console.error('TTRPG Card Forge: saved-set artwork persistence failed', error);
 			new Notice('Card Forge could not save this print set because artwork could not be persisted.');
@@ -975,12 +983,28 @@ export class CardForgeView extends ItemView {
 
 	private async loadSavedPrintSet(id: string): Promise<void> {
 		const available = new Set(this.itemIndex.getItems().map((item) => item.filePath));
-		let result = this.savedPrintSets.loadIntoQueue(id, this.printQueue, available);
+		const currentState = this.savedPrintSetSession.getState(
+			this.savedPrintSets.getSets(),
+			this.printQueue.getEntries(),
+		);
+		const replacementRisk = getSavedPrintSetLoadRisk(
+			currentState,
+			this.printQueue.getEntries(),
+		);
+		let result = this.savedPrintSets.loadIntoQueue(
+			id,
+			this.printQueue,
+			available,
+			replacementRisk === 'none',
+		);
 		if (result.status === 'requires-confirmation') {
+			const detail = replacementRisk === 'modified-active-set' && currentState.activeSet
+				? `${currentState.activeSet.name} has unsaved changes. Loading “${result.set.name}” will replace the current print queue.`
+				: `Loading “${result.set.name}” will replace the unsaved current print queue.`;
 			const replace = await confirmWorkflowAction(
 				this.app,
 				'Replace current print queue?',
-				`Loading “${result.set.name}” will replace the current print queue.`,
+				detail,
 				'Replace queue',
 			);
 			if (!replace) {
@@ -999,7 +1023,7 @@ export class CardForgeView extends ItemView {
 		if (result.status !== 'loaded') {
 			return;
 		}
-		this.savedPrintSetSession.activate(result.set.id, this.printQueue.getEntries());
+		this.savedPrintSetSession.activate(result.set.id, result.set.entries);
 		this.setWorkflowMode('queue');
 		if (this.editingQueueEntryId && !this.printQueue.getEntry(this.editingQueueEntryId)) {
 			this.resetEditorSession();

@@ -318,6 +318,35 @@ void test('temporary artwork persists only a lightweight session reference', () 
 	assert.doesNotMatch(serialized, /blob:|base64|data:image/iu);
 });
 
+void test('promotes matching temporary artwork to Vault paths in one queue mutation', () => {
+	const queue = createQueue();
+	const first = queue.add('items/first.md', {
+		title: 'First',
+		artwork: { kind: 'temporary', id: 'shared-art', origin: 'local' },
+	});
+	const second = queue.add('items/second.md', {
+		artwork: { kind: 'temporary', id: 'other-art', origin: 'https' },
+	});
+	let notifications = 0;
+	queue.subscribe(() => { notifications += 1; });
+	assert.equal(queue.promoteTemporaryArtworkReferences(new Map([
+		['shared-art', 'Card Forge Assets/shared.png'],
+	])), 1);
+	assert.equal(notifications, 1);
+	assert.equal(queue.getEntry(first.id)?.overrides?.title, 'First');
+	assert.deepEqual(queue.getEntry(first.id)?.overrides?.artwork, {
+		kind: 'vault',
+		path: 'Card Forge Assets/shared.png',
+	});
+	assert.deepEqual(queue.getEntry(second.id)?.overrides?.artwork, {
+		kind: 'temporary',
+		id: 'other-art',
+		origin: 'https',
+	});
+	assert.equal(queue.promoteTemporaryArtworkReferences(new Map()), 0);
+	assert.equal(notifications, 1);
+});
+
 void test('queue reset remains a working draft until Save and other entries stay isolated', () => {
 	const queue = createQueue();
 	const first = queue.add('items/source.md', { title: 'First edit' });

@@ -37,6 +37,7 @@ const SAVED_SET_ARTWORK_OWNER = 'saved-print-sets';
 interface LoadedPluginData {
 	printQueue?: unknown;
 	savedPrintSets?: unknown;
+	activeSavedSetId?: unknown;
 }
 
 export default class TTRPGCardForgePlugin extends Plugin {
@@ -55,6 +56,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 	private unsubscribeFromIndex: (() => void) | null = null;
 	private unsubscribeFromQueue: (() => void) | null = null;
 	private unsubscribeFromSavedPrintSets: (() => void) | null = null;
+	private unsubscribeFromSavedPrintSetSession: (() => void) | null = null;
 	private removePerformanceDebugApi: (() => void) | null = null;
 	private saveChain: Promise<void> = Promise.resolve();
 
@@ -63,6 +65,10 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		this.itemIndex = new ItemIndex(this.app);
 		this.printQueue = new PrintQueueService(saved.printQueue);
 		this.savedPrintSets = new SavedPrintSetService(saved.savedPrintSets);
+		const activeSavedSetRestore = this.savedPrintSetSession.restore(
+			saved.activeSavedSetId,
+			this.savedPrintSets.getSets(),
+		);
 		this.syncQueueTemporaryArtworkReferences();
 		this.syncSavedSetTemporaryArtworkReferences();
 		this.removePerformanceDebugApi = this.planningPerformance.installDebugApi(window);
@@ -81,7 +87,16 @@ export default class TTRPGCardForgePlugin extends Plugin {
 				console.error('TTRPG Card Forge: could not persist saved print sets', error);
 			});
 		});
-		if (this.printQueue.hydrationRepaired || this.savedPrintSets.hydrationRepaired) {
+		this.unsubscribeFromSavedPrintSetSession = this.savedPrintSetSession.subscribe(() => {
+			void this.persistPluginData().catch((error: unknown) => {
+				console.error('TTRPG Card Forge: could not persist active saved print set', error);
+			});
+		});
+		if (
+			this.printQueue.hydrationRepaired
+			|| this.savedPrintSets.hydrationRepaired
+			|| activeSavedSetRestore === 'invalid'
+		) {
 			void this.persistPluginData().catch((error: unknown) => {
 				console.error('TTRPG Card Forge: could not persist repaired plugin data', error);
 			});
@@ -188,6 +203,8 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		this.unsubscribeFromQueue = null;
 		this.unsubscribeFromSavedPrintSets?.();
 		this.unsubscribeFromSavedPrintSets = null;
+		this.unsubscribeFromSavedPrintSetSession?.();
+		this.unsubscribeFromSavedPrintSetSession = null;
 		this.removePerformanceDebugApi?.();
 		this.removePerformanceDebugApi = null;
 		this.physicalPlanCache.clear();
@@ -420,6 +437,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		return {
 			printQueue: saved?.printQueue,
 			savedPrintSets: saved?.savedPrintSets,
+			activeSavedSetId: saved?.activeSavedSetId,
 		};
 	}
 
@@ -428,6 +446,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 			...this.settings,
 			printQueue: this.printQueue.serialize(),
 			savedPrintSets: this.savedPrintSets.serialize(),
+			activeSavedSetId: this.savedPrintSetSession.activeSavedSetId ?? null,
 		}));
 		return this.saveChain;
 	}

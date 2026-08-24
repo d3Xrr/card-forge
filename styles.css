@@ -370,6 +370,10 @@
 	align-items: stretch;
 }
 
+.ttrpg-card-forge__preview.is-source-note .ttrpg-card-forge__card-preview-region {
+	display: none;
+}
+
 .ttrpg-card-forge__source-note {
 	display: flex;
 	flex: 1 1 auto;

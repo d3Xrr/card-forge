@@ -20,7 +20,7 @@ Phase 4D connects non-destructive live editing, batch queue building, reusable S
 - Adds selected items to a persistent print queue only when the user requests it.
 - Persists each queue entry's overrides and exposes them again through its **Edit** action after reload.
 - Supports quantity changes, removal, clearing, accessible move-up/move-down ordering, and independent queue-entry duplication through compact icon actions.
-- Saves named queue snapshots as persistent Saved Print Sets that can later replace the active queue with fresh live entry IDs. A loaded set becomes the session-local active set, with **Save**, **Save as…**, and automatic **Modified** status based on canonical queue content rather than live IDs.
+- Saves named queue snapshots as persistent Saved Print Sets that can later replace the active queue with fresh live entry IDs. The validated active-set association survives restart, with **Save**, **Save as…**, and automatic **Modified** status derived from canonical queue content rather than live IDs or a stored dirty flag.
 - Persists available temporary artwork into the configured Card Forge Assets folder when a Saved Print Set is explicitly saved; missing temporary artwork blocks the save instead of creating an incomplete template.
 - Adds command-palette actions to preview or queue the currently active indexed item note.
 - Keeps continuation pages together in copy order. A two-card item at quantity three becomes `1,2,1,2,1,2`.
@@ -39,7 +39,7 @@ Phase 4D connects non-destructive live editing, batch queue building, reusable S
 3. Optionally switch to **Edit** and make a live print draft. Use **Reset edits** or **Add to print queue**; there is no separate Apply step for a new draft.
 4. Adding the same source with equivalent overrides increments its quantity; a different override state creates a distinct entry.
 5. Use **Edit**, **Duplicate**, `+`, `−`, move-up, move-down, and remove controls to prepare the queue. Existing queue edits use **Save changes**, **Discard changes**, and **Reset to source**; reset remains a working draft until saved.
-6. Optionally choose **Save as…** to create a reusable queue template. After loading or saving one, use **Save** to update that active set without another name prompt.
+6. Optionally choose **Save as…** to create a reusable queue template. After loading or saving one, use **Save** to update that active set without another name prompt; clean or Modified association is restored safely after restart.
 7. Inspect the physical-card count and A4 sheet preview, then choose **Export PDF**.
 8. Open the generated PDF with **Open last PDF**, or use **Exports** to find earlier Card Forge PDFs in the configured folder.
 

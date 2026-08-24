@@ -67,6 +67,7 @@ void test('stale Source note renders cannot restore another source scroll positi
 
 void test('Source note integration is native-rendered, read-only, and context-scoped', () => {
 	const view = readFileSync('src/views/card-forge-view.ts', 'utf8');
+	const css = readFileSync('styles.css', 'utf8');
 	const modeStart = view.indexOf('private setPreviewMode');
 	const modeEnd = view.indexOf('private resetEditorSession', modeStart);
 	const setModeMethod = view.slice(modeStart, modeEnd);
@@ -87,4 +88,18 @@ void test('Source note integration is native-rendered, read-only, and context-sc
 	assert.match(sourceNoteMethod, /scrollHeight/u);
 	assert.match(view, /SourceNoteScrollMemory/u);
 	assert.doesNotMatch(view, /sourceNoteScrollMemory[\s\S]{0,120}persistPluginData/u);
+	assert.match(
+		css,
+		/\.ttrpg-card-forge__preview\.is-source-note \.ttrpg-card-forge__card-preview-region\s*\{\s*display: none;/u,
+	);
+	assert.match(css, /\.ttrpg-card-forge__source-note\s*\{[\s\S]*flex: 1 1 auto;[\s\S]*overflow: hidden;/u);
+	assert.match(css, /\.ttrpg-card-forge__source-note-content\s*\{[\s\S]*overflow: auto;/u);
+	assert.match(
+		css,
+		/\.ttrpg-card-forge__preview\.is-editing \.ttrpg-card-forge__card-preview-region[\s\S]*grid-column: 2;[\s\S]*grid-row: 2 \/ 6;/u,
+	);
+	assert.match(
+		css,
+		/\.ttrpg-card-forge__card-preview-region\s*\{[\s\S]*align-items: center;[\s\S]*justify-content: center;/u,
+	);
 });

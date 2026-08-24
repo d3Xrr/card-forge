@@ -177,7 +177,9 @@ void test('loading replaces once with fresh IDs, preserved order/quantity, and i
 		path: 'Card Forge Assets/wand.webp',
 	});
 	const firstIds = firstLoad.entries.map((entry) => entry.id);
+	const beforeDeclinedReplacement = structuredClone(queue.getEntries());
 	assert.equal(sets.loadIntoQueue(saved.set.id, queue, available).status, 'requires-confirmation');
+	assert.deepEqual(queue.getEntries(), beforeDeclinedReplacement);
 	const secondLoad = sets.loadIntoQueue(saved.set.id, queue, available, true);
 	assert.equal(secondLoad.status, 'loaded');
 	if (secondLoad.status !== 'loaded') {

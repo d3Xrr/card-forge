@@ -6,6 +6,7 @@ import { PrintQueueService } from '../src/models/print-queue';
 import { SavedPrintSetService } from '../src/models/saved-print-set';
 import type { ArtworkImportPayload } from '../src/services/artwork-importer-core';
 import { prepareSavedPrintSetEntries } from '../src/services/saved-print-set-artwork';
+import { SavedPrintSetSession } from '../src/services/saved-print-set-session';
 
 function createVault(failWrite = false): {
 	vault: {
@@ -219,4 +220,52 @@ void test('deleting a Saved Set never removes its persisted artwork', async () =
 	}
 	assert.equal(sets.delete(saved.set.id), true);
 	assert.ok(entries.has('Assets/keep.png'));
+});
+
+void test('Saved Set Save promotes live temporary artwork and restores clean after restart', async () => {
+	const queue = new PrintQueueService([], () => 'live-entry');
+	queue.add('items/a.md', {
+		artwork: { kind: 'temporary', id: 'session-art', origin: 'local' },
+	});
+	const { vault } = createVault();
+	const prepared = await prepareSavedPrintSetEntries(
+		queue.getEntries(),
+		vault,
+		{ getPayload: () => payload('Persistent.png', 3) },
+		'Assets',
+	);
+	assert.equal(prepared.status, 'ready');
+	if (prepared.status !== 'ready') {
+		return;
+	}
+	const sets = new SavedPrintSetService([], () => 'saved-set', () => 1);
+	const saved = sets.save('Persistent', prepared.entries);
+	assert.equal(saved.status, 'created');
+	if (saved.status !== 'created') {
+		return;
+	}
+	assert.equal(
+		queue.promoteTemporaryArtworkReferences(prepared.temporaryArtworkPaths),
+		1,
+	);
+	const session = new SavedPrintSetSession();
+	session.activate(saved.set.id, saved.set.entries);
+	assert.equal(session.getState(sets.getSets(), queue.getEntries()).dirty, false);
+	assert.equal(queue.getEntries()[0]?.overrides?.artwork?.kind, 'vault');
+
+	const restartedQueue = new PrintQueueService(
+		JSON.parse(JSON.stringify(queue.serialize())) as unknown,
+		() => 'unused',
+	);
+	const restartedSets = new SavedPrintSetService(
+		JSON.parse(JSON.stringify(sets.serialize())) as unknown,
+		() => 'unused',
+		() => 2,
+	);
+	const restartedSession = new SavedPrintSetSession();
+	assert.equal(restartedSession.restore(saved.set.id, restartedSets.getSets()), 'restored');
+	assert.equal(
+		restartedSession.getState(restartedSets.getSets(), restartedQueue.getEntries()).dirty,
+		false,
+	);
 });

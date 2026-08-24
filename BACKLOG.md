@@ -20,7 +20,7 @@ This file tracks completed workflow milestones and intentionally deferred work.
 - Queue-entry **Duplicate** convenience with fresh IDs and independent print overrides.
 - Compact right-side **Print queue | Saved sets | Exports** workflow navigation.
 - True mutually exclusive Workflow views with queue-only A4/PDF controls.
-- Session-local active Saved Set state with canonical dirty detection and contextual **Save | Save as…** actions.
+- Restart-safe active Saved Set association with canonical dirty detection and contextual **Save | Save as…** actions.
 - Durable Saved Set artwork preparation that persists available temporary artwork into the configured Card Forge Assets folder.
 - Compact accessible Lucide actions for queue-entry Duplicate, Edit, and Remove.
 
@@ -36,6 +36,19 @@ This file tracks completed workflow milestones and intentionally deferred work.
 ### Preview navigation / pagination layout revisit
 
 Pagination currently remains in a stable shared location when switching between Preview and Edit card, but after Edit preview centering the controls can appear optically detached from the centered card. Revisit placement after the Card Preview toolbar and surrounding controls mature. Evaluate centered top navigation, card-relative navigation, bottom navigation, or another shared toolbar layout while preserving a stable control position across Preview and Edit whenever practical. Do not change pagination layout before 0.5.0.
+
+### Variant/parser edge-case regression pass
+
+Collect real parser and variant-resolution failures discovered during Card Forge use and address them through focused fixtures and tests, isolated from workflow releases because resolver changes have a wide regression surface.
+
+- **Armor of Cold Resistance:** use the real item as a fixture and investigate why some concrete armor variants correctly show labels such as Breastplate, Chain Mail, Chain Shirt, Ring Mail, and Scale Mail while other visible dropdown labels repeat “Armor of Cold Resistance” despite resolving concrete armor statistics.
+- **+1 Yklwa:** use the real variant as a fixture and investigate its actual source/base resolution before changing fallbacks. Its card currently obtains weapon statistics (`1d8 piercing`, Thrown, `10/30`, `3 lb.`) while normalized/editor Type and Rarity both appear as Uncommon and normal Weapon presentation is missing.
+
+Do not modify parser or resolver behavior before the 0.6.0 workflow release.
+
+### Persistent / warm Saved Set plan cache investigation
+
+Measure the actual cost of re-planning a Saved Print Set after Obsidian restart. Any future persistent or warm plan reuse must have robust invalidation covering the renderer/planner schema version, effective-card fingerprint, source revision/content, artwork revision, layout-affecting settings, and physical profile. Saved Set semantic snapshots remain authoritative; do not persist physical planner output without that evidence and versioning.
 
 ### Idle resource footprint audit
 

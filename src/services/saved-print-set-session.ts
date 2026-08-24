@@ -10,29 +10,71 @@ export interface ActiveSavedPrintSetState {
 	dirty: boolean;
 }
 
-/** Plugin-lifetime association between the live queue and one Saved Print Set. */
+export type SavedPrintSetSessionRestoreStatus = 'none' | 'restored' | 'invalid';
+export type SavedPrintSetLoadRisk = 'none' | 'unsaved-queue' | 'modified-active-set';
+export type SavedPrintSetSessionListener = (activeSavedSetId: string | undefined) => void;
+
+/** Validated association between the persisted live queue and one Saved Print Set. */
 export class SavedPrintSetSession {
 	private activeId: string | undefined;
 	private cleanQueueFingerprint: string | undefined;
+	private readonly listeners = new Set<SavedPrintSetSessionListener>();
 
 	get activeSavedSetId(): string | undefined {
 		return this.activeId;
 	}
 
-	activate(id: string, cleanEntries: readonly PrintQueueEntrySnapshot[]): void {
-		this.activeId = id;
-		this.cleanQueueFingerprint = createSavedPrintSetQueueFingerprint(cleanEntries);
+	subscribe(listener: SavedPrintSetSessionListener): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
 	}
 
-	clear(): void {
+	restore(
+		value: unknown,
+		sets: readonly SavedPrintSet[],
+	): SavedPrintSetSessionRestoreStatus {
 		this.activeId = undefined;
 		this.cleanQueueFingerprint = undefined;
+		if (value === undefined || value === null) {
+			return 'none';
+		}
+		if (typeof value !== 'string' || value.trim() !== value || !value) {
+			return 'invalid';
+		}
+		const set = sets.find((candidate) => candidate.id === value);
+		if (!set) {
+			return 'invalid';
+		}
+		this.activeId = set.id;
+		this.cleanQueueFingerprint = createSavedPrintSetQueueFingerprint(set.entries);
+		return 'restored';
 	}
 
-	clearIfActive(id: string): void {
-		if (this.activeId === id) {
-			this.clear();
+	activate(id: string, cleanEntries: readonly PrintQueueEntrySnapshot[]): boolean {
+		const changed = this.activeId !== id;
+		this.activeId = id;
+		this.cleanQueueFingerprint = createSavedPrintSetQueueFingerprint(cleanEntries);
+		if (changed) {
+			this.emit();
 		}
+		return changed;
+	}
+
+	clear(): boolean {
+		const changed = this.activeId !== undefined;
+		this.activeId = undefined;
+		this.cleanQueueFingerprint = undefined;
+		if (changed) {
+			this.emit();
+		}
+		return changed;
+	}
+
+	clearIfActive(id: string): boolean {
+		if (this.activeId === id) {
+			return this.clear();
+		}
+		return false;
 	}
 
 	getState(
@@ -53,6 +95,22 @@ export class SavedPrintSetSession {
 				!== this.cleanQueueFingerprint,
 		};
 	}
+
+	private emit(): void {
+		for (const listener of this.listeners) {
+			listener(this.activeId);
+		}
+	}
+}
+
+export function getSavedPrintSetLoadRisk(
+	state: ActiveSavedPrintSetState,
+	queueEntries: readonly PrintQueueEntrySnapshot[],
+): SavedPrintSetLoadRisk {
+	if (queueEntries.length === 0 || (state.activeSet && !state.dirty)) {
+		return 'none';
+	}
+	return state.activeSet ? 'modified-active-set' : 'unsaved-queue';
 }
 
 /** Canonical reusable queue state; intentionally excludes live queue IDs. */
