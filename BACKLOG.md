@@ -33,6 +33,10 @@ This file tracks completed workflow milestones and intentionally deferred work.
 - Richer Export Gallery metadata or thumbnails.
 - Further Preview/Source navigation decisions after manual workflow testing.
 
+### Queue provenance / original item label
+
+When an effective/custom queue title differs meaningfully from the original normalized/indexed source item title, consider showing a subtle informational provenance line such as **from +1 Amulet of the Devout** in Print Queue and potentially Saved Sets. Do not show raw file paths or clutter unchanged entries, and do not let provenance affect card rendering or queue identity.
+
 ### Preview navigation / pagination layout revisit
 
 Pagination currently remains in a stable shared location when switching between Preview and Edit card, but after Edit preview centering the controls can appear optically detached from the centered card. Revisit placement after the Card Preview toolbar and surrounding controls mature. Evaluate centered top navigation, card-relative navigation, bottom navigation, or another shared toolbar layout while preserving a stable control position across Preview and Edit whenever practical. Do not change pagination layout before 0.5.0.
