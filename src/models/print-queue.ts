@@ -4,11 +4,16 @@ import {
 	normalizeCardOverrides,
 } from '../services/card-overrides';
 
-export interface PrintQueueEntry {
-	id: string;
+export interface PrintQueueEntrySnapshot {
 	filePath: string;
 	quantity: number;
 	overrides?: CardOverrides;
+	/** Preserve an intentionally separate logical entry even when its printable state matches another. */
+	separate?: true;
+}
+
+export interface PrintQueueEntry extends PrintQueueEntrySnapshot {
+	id: string;
 }
 
 export type PrintQueueListener = (entries: readonly PrintQueueEntry[]) => void;
@@ -27,6 +32,8 @@ export interface PrintQueueBatchAddResult {
 	entries: PrintQueueEntry[];
 	rejected: number;
 }
+
+export type PrintQueueReplaceResult = PrintQueueBatchAddResult;
 
 export class PrintQueueService {
 	private entries: PrintQueueEntry[];
@@ -77,7 +84,8 @@ export class PrintQueueService {
 		const normalizedPath = filePath.trim();
 		const normalizedOverrides = normalizeCardOverrides(overrides);
 		const existing = this.entries.find((entry) =>
-			entry.filePath === normalizedPath
+			!entry.separate
+			&& entry.filePath === normalizedPath
 			&& areCardOverridesEqual(entry.overrides, normalizedOverrides));
 		if (existing) {
 			existing.quantity += 1;
@@ -95,6 +103,46 @@ export class PrintQueueService {
 		};
 		this.entries.push(entry);
 		return entry;
+	}
+
+	duplicate(id: string): PrintQueueEntry | undefined {
+		const source = this.getEntry(id);
+		if (!source) {
+			return undefined;
+		}
+		const duplicate: PrintQueueEntry = {
+			id: createUniqueQueueEntryId(
+				new Set(this.entries.map((candidate) => candidate.id)),
+				this.createId,
+			),
+			...createPrintQueueEntrySnapshot(source),
+			separate: true,
+		};
+		const sourceIndex = this.entries.indexOf(source);
+		this.entries.splice(sourceIndex + 1, 0, duplicate);
+		this.emit();
+		return duplicate;
+	}
+
+	replaceWithSnapshots(
+		values: readonly PrintQueueEntrySnapshot[],
+	): PrintQueueReplaceResult {
+		const entries: PrintQueueEntry[] = [];
+		const usedIds = new Set<string>();
+		let rejected = 0;
+		for (const value of values) {
+			const snapshot = normalizePrintQueueEntrySnapshot(value);
+			if (!snapshot) {
+				rejected += 1;
+				continue;
+			}
+			const id = createUniqueQueueEntryId(usedIds, this.createId);
+			usedIds.add(id);
+			entries.push({ id, ...snapshot });
+		}
+		this.entries = entries;
+		this.emit();
+		return { entries, rejected };
 	}
 
 	updateOverrides(id: string, overrides?: CardOverrides): boolean {
@@ -188,12 +236,24 @@ export class PrintQueueService {
 export function serializePrintQueue(
 	entries: readonly PrintQueueEntry[],
 ): PrintQueueEntry[] {
-	return entries.map((entry) => ({
-		...entry,
-		...(entry.overrides
-			? { overrides: structuredClone(entry.overrides) }
-			: {}),
-	}));
+	return entries.map((entry) => ({ id: entry.id, ...createPrintQueueEntrySnapshot(entry) }));
+}
+
+export function createPrintQueueEntrySnapshot(
+	entry: PrintQueueEntrySnapshot,
+): PrintQueueEntrySnapshot {
+	return {
+		filePath: entry.filePath,
+		quantity: entry.quantity,
+		...(entry.overrides ? { overrides: structuredClone(entry.overrides) } : {}),
+		...(entry.separate ? { separate: true as const } : {}),
+	};
+}
+
+export function normalizePrintQueueEntrySnapshot(
+	value: unknown,
+): PrintQueueEntrySnapshot | undefined {
+	return parsePrintQueueEntrySnapshot(value).snapshot;
 }
 
 export function deserializePrintQueue(
@@ -222,33 +282,26 @@ export function hydratePrintQueue(
 	}));
 	let repaired = false;
 	for (const candidate of value) {
-		if (!isRecord(candidate)) {
+		const parsed = parsePrintQueueEntrySnapshot(candidate);
+		if (!parsed.snapshot) {
 			repaired = true;
+			continue;
+		}
+		const snapshot = parsed.snapshot;
+		repaired ||= parsed.repaired;
+		if (!isRecord(candidate)) {
 			continue;
 		}
 		const persistedId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
-		const filePath = typeof candidate.filePath === 'string'
-			? candidate.filePath.trim()
-			: '';
-		const quantity = candidate.quantity === undefined
-			? 1
-			: typeof candidate.quantity === 'number'
-				? Math.floor(candidate.quantity)
-				: 0;
-		if (candidate.quantity === undefined) {
-			repaired = true;
-		}
-		if (!filePath || quantity < 1) {
-			repaired = true;
-			continue;
-		}
-		const overrides = normalizeCardOverrides(candidate.overrides);
 
-		const existing = entries.find((entry) =>
-			entry.filePath === filePath
-			&& areCardOverridesEqual(entry.overrides, overrides));
+		const existing = snapshot.separate
+			? undefined
+			: entries.find((entry) =>
+				!entry.separate
+				&& entry.filePath === snapshot.filePath
+				&& areCardOverridesEqual(entry.overrides, snapshot.overrides));
 		if (existing) {
-			existing.quantity += quantity;
+			existing.quantity += snapshot.quantity;
 			repaired = true;
 		} else {
 			const id = persistedId && !usedIds.has(persistedId)
@@ -259,15 +312,39 @@ export function hydratePrintQueue(
 			}
 			usedIds.add(id);
 			blockedIds.add(id);
-			entries.push({
-				id,
-				filePath,
-				quantity,
-				...(overrides ? { overrides } : {}),
-			});
+			entries.push({ id, ...snapshot });
 		}
 	}
 	return { entries, repaired };
+}
+
+function parsePrintQueueEntrySnapshot(value: unknown): {
+	snapshot?: PrintQueueEntrySnapshot;
+	repaired: boolean;
+} {
+	if (!isRecord(value)) {
+		return { repaired: true };
+	}
+	const filePath = typeof value.filePath === 'string' ? value.filePath.trim() : '';
+	const quantity = value.quantity === undefined
+		? 1
+		: typeof value.quantity === 'number'
+			? Math.floor(value.quantity)
+			: 0;
+	if (!filePath || quantity < 1) {
+		return { repaired: true };
+	}
+	const overrides = normalizeCardOverrides(value.overrides);
+	return {
+		snapshot: {
+			filePath,
+			quantity,
+			...(overrides ? { overrides } : {}),
+			...(value.separate === true ? { separate: true as const } : {}),
+		},
+		repaired: value.quantity === undefined
+			|| (value.separate !== undefined && value.separate !== true),
+	};
 }
 
 function createQueueEntryId(): string {

@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+	collectTemporaryArtworkIds,
+	TemporaryArtworkStore,
+} from '../src/services/temporary-artwork-store';
+import {
 	deserializePrintQueue,
 	getUniqueQueueEntryById,
 	PrintQueueService,
@@ -9,7 +13,6 @@ import {
 } from '../src/models/print-queue';
 import { applyCardOverrides } from '../src/services/card-overrides';
 import { createEffectiveCardInput } from '../src/services/effective-card';
-import { TemporaryArtworkStore } from '../src/services/temporary-artwork-store';
 import type { ItemCardData } from '../src/models/item';
 import type { CardOverrides } from '../src/models/card-overrides';
 
@@ -115,6 +118,112 @@ void test('increments and decrements quantity without dropping below one', () =>
 	queue.decrement(entry.id);
 	queue.decrement(entry.id);
 	assert.equal(queue.getEntries()[0]?.quantity, 1);
+});
+
+void test('duplicates a complete logical entry immediately after its source with independent state', () => {
+	const queue = createQueue();
+	const source = queue.add('items/weapon.md', {
+		title: '+1 Longsword',
+		variant: { id: 'longsword' },
+		rulesMarkdown: `First card\n\n///CARD BREAK///\n\nSecond card`,
+		stats: { properties: ['versatile'], damage: '1d8 + 1' },
+		artwork: { kind: 'temporary', id: 'shared-art', origin: 'local' },
+	});
+	queue.increment(source.id);
+	queue.increment(source.id);
+	const tail = queue.add('items/tail.md');
+	let notifications = 0;
+	queue.subscribe(() => {
+		notifications += 1;
+	});
+
+	const duplicate = queue.duplicate(source.id);
+	assert.ok(duplicate);
+	assert.equal(notifications, 1);
+	assert.notEqual(duplicate.id, source.id);
+	assert.equal(duplicate.quantity, 3);
+	assert.equal(duplicate.filePath, source.filePath);
+	assert.equal(duplicate.separate, true);
+	assert.deepEqual(duplicate.overrides, source.overrides);
+	assert.notStrictEqual(duplicate.overrides, source.overrides);
+	assert.notStrictEqual(duplicate.overrides?.stats, source.overrides?.stats);
+	assert.notStrictEqual(
+		duplicate.overrides?.stats?.properties,
+		source.overrides?.stats?.properties,
+	);
+	assert.deepEqual(queue.getEntries().map((entry) => entry.id), [source.id, duplicate.id, tail.id]);
+	const baseItem: ItemCardData = {
+		filePath: source.filePath,
+		name: '+1 Weapon',
+		description: 'Source rules',
+		hasImage: false,
+		rawTags: [],
+	};
+	assert.deepEqual(
+		applyCardOverrides(baseItem, duplicate.overrides).item,
+		applyCardOverrides(baseItem, source.overrides).item,
+	);
+
+	queue.updateOverrides(source.id, {
+		...source.overrides,
+		title: '+1 Warhammer',
+		stats: { ...source.overrides?.stats, properties: ['versatile', 'heavy'] },
+	});
+	assert.equal(duplicate.overrides?.title, '+1 Longsword');
+	assert.deepEqual(duplicate.overrides?.stats?.properties, ['versatile']);
+
+	const restored = new PrintQueueService(queue.serialize(), () => 'unused');
+	assert.equal(restored.getEntries().length, 3);
+	assert.equal(restored.getEntry(duplicate.id)?.quantity, 3);
+	assert.equal(restored.getEntry(duplicate.id)?.overrides?.title, '+1 Longsword');
+	assert.match(
+		restored.getEntry(duplicate.id)?.overrides?.rulesMarkdown ?? '',
+		/\/\/\/CARD BREAK\/\/\//u,
+	);
+});
+
+void test('duplicate temporary artwork stays alive until both logical entries release it', () => {
+	const revoked: string[] = [];
+	const store = new TemporaryArtworkStore({
+		create: () => 'blob:shared-art',
+		revoke: (path) => revoked.push(path),
+	}, () => 'shared-art');
+	store.create({ fileName: 'shared.png', data: new Uint8Array([1]).buffer });
+	const queue = createQueue();
+	const source = queue.add('items/source.md', {
+		artwork: { kind: 'temporary', id: 'shared-art', origin: 'local' },
+	});
+	const duplicate = queue.duplicate(source.id);
+	assert.ok(duplicate);
+	store.setOwnerReferences(
+		'queue',
+		collectTemporaryArtworkIds(queue.getEntries().map((entry) => entry.overrides)),
+	);
+	queue.remove(source.id);
+	store.setOwnerReferences(
+		'queue',
+		collectTemporaryArtworkIds(queue.getEntries().map((entry) => entry.overrides)),
+	);
+	assert.ok(store.get('shared-art'));
+	assert.deepEqual(revoked, []);
+	queue.remove(duplicate.id);
+	store.setOwnerReferences('queue', []);
+	assert.equal(store.get('shared-art'), undefined);
+	assert.deepEqual(revoked, ['blob:shared-art']);
+});
+
+void test('duplicating a default entry never inherits unrelated editor overrides', () => {
+	const queue = createQueue();
+	const source = queue.add('items/default.md');
+	const unrelatedEditorDraft = { title: 'Do not leak', stats: { damage: '99d99' } };
+	const duplicate = queue.duplicate(source.id);
+	assert.ok(duplicate);
+	assert.equal(source.overrides, undefined);
+	assert.equal(duplicate.overrides, undefined);
+	assert.deepEqual(unrelatedEditorDraft, {
+		title: 'Do not leak',
+		stats: { damage: '99d99' },
+	});
 });
 
 void test('removes, clears, and reorders queue entries', () => {
