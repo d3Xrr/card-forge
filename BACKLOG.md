@@ -2,6 +2,25 @@
 
 This file tracks completed workflow milestones and intentionally deferred work.
 
+## Implemented in 0.6.1 stabilization
+
+- Added bounded source/base/override provenance for structured card fields and included it in physical-plan identities.
+- Kept inherited base-equipment statistics available to Edit card while suppressing only inherited Cost on physical cards; source and explicit Cost still render.
+- Corrected real-data variant resolution for Armor of Cold Resistance, +1 Yklwa, and Monster Hunter's Weapon labels without item-name condition trees.
+- Preserved qualified attunement text for Retribution, Holy Avenger, Inexhaustible Armor, and other generic sources.
+- Normalized Obsidian callouts in card rules, including the real inline Multiweapon shape, without changing Source Note rendering or source Markdown.
+- Defined exact case-insensitive `Unknown` rarity as a non-printing physical-card sentinel while retaining values such as `Unknowns`.
+- Added subtle queue provenance only for meaningful explicit title edits; ordinary variant selection remains uncluttered.
+- Made Edit card responsive to its local preview container, stacking the editor and card preview at narrow notebook/split-pane widths while preserving canonical physical geometry.
+
+## Release roadmap
+
+- **0.6.1 — Stabilization / parser hygiene / responsive workspace.**
+- **0.7.0 — Card Presentation / Design System.** Intended scope: a Design tab; Dark, Light, and Printer Friendly presets; Standard, Larger, Minimal, and Hidden artwork sizing; bounded field visibility; and safe information-density presets. This work must avoid arbitrary CSS customization and preserve planner/fitting guarantees.
+- **0.8.0 — Duplex / card backs / printer calibration.**
+
+The 0.7.0 and 0.8.0 items are documentation only and are not implemented in 0.6.1.
+
 ## Implemented in Phase 4C core
 
 - Multi-select item browser with path-based batch selection.
@@ -33,22 +52,9 @@ This file tracks completed workflow milestones and intentionally deferred work.
 - Richer Export Gallery metadata or thumbnails.
 - Further Preview/Source navigation decisions after manual workflow testing.
 
-### Queue provenance / original item label
-
-When an effective/custom queue title differs meaningfully from the original normalized/indexed source item title, consider showing a subtle informational provenance line such as **from +1 Amulet of the Devout** in Print Queue and potentially Saved Sets. Do not show raw file paths or clutter unchanged entries, and do not let provenance affect card rendering or queue identity.
-
 ### Preview navigation / pagination layout revisit
 
 Pagination currently remains in a stable shared location when switching between Preview and Edit card, but after Edit preview centering the controls can appear optically detached from the centered card. Revisit placement after the Card Preview toolbar and surrounding controls mature. Evaluate centered top navigation, card-relative navigation, bottom navigation, or another shared toolbar layout while preserving a stable control position across Preview and Edit whenever practical. Do not change pagination layout before 0.5.0.
-
-### Variant/parser edge-case regression pass
-
-Collect real parser and variant-resolution failures discovered during Card Forge use and address them through focused fixtures and tests, isolated from workflow releases because resolver changes have a wide regression surface.
-
-- **Armor of Cold Resistance:** use the real item as a fixture and investigate why some concrete armor variants correctly show labels such as Breastplate, Chain Mail, Chain Shirt, Ring Mail, and Scale Mail while other visible dropdown labels repeat “Armor of Cold Resistance” despite resolving concrete armor statistics.
-- **+1 Yklwa:** use the real variant as a fixture and investigate its actual source/base resolution before changing fallbacks. Its card currently obtains weapon statistics (`1d8 piercing`, Thrown, `10/30`, `3 lb.`) while normalized/editor Type and Rarity both appear as Uncommon and normal Weapon presentation is missing.
-
-Do not modify parser or resolver behavior before the 0.6.0 workflow release.
 
 ### Persistent / warm Saved Set plan cache investigation
 
@@ -63,6 +69,9 @@ Measure Card Forge resource use while the plugin is enabled and its view is not 
 - Customization presets.
 - A printer-friendly style preset.
 - Duplex printing and card backs.
+- Design tab with bounded Dark, Light, and Printer Friendly presentation presets.
+- Standard, Larger, Minimal, and Hidden artwork-size presets.
+- Bounded field-visibility and information-density controls.
 - Generic Markdown input and parser work.
 - A manual custom-card creator.
 - Additional card types, including spells, feats, conditions, and monster or NPC cards.
@@ -71,10 +80,6 @@ Measure Card Forge resource use while the plugin is enabled and its view is not 
 ## Dedicated bullet-marker troubleshooting
 
 Run a separate evidence-driven troubleshooting session for the physical-card bullet marker. Inspect computed styles, the actual pseudo-element and glyph metrics, line height, parent positioning, font rendering, and screenshot/manual results before changing further CSS constants. Bullet appearance is not a 0.4.0 release blocker.
-
-## Inherited base Cost visibility
-
-Consider bounded field-visibility customization for magic variants that inherit base-equipment structured data. A future default could keep Damage, Properties, Mastery, Range, and Weight visible while allowing inherited base Cost to be hidden. Do not change current Cost extraction or display behavior for 0.4.0.
 
 ## Artwork persistence choice before import
 
