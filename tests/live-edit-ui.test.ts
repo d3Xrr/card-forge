@@ -10,6 +10,7 @@ import {
 	createPreviewModeState,
 	createPreviewStatusChips,
 	createQueueProvenanceLabel,
+	createQueueSummaryPresentation,
 	createTemporaryArtworkStatus,
 	createVariantPreservationNotice,
 	getArtworkEditorPresentation,
@@ -177,6 +178,42 @@ void test('queue provenance is reserved for explicit title edits and omits paths
 	assert.equal(createQueueProvenanceLabel(undefined, undefined, { title: 'The Spindle' }), undefined);
 });
 
+void test('queue summary keeps physical cards and A4 visible while retaining details in metadata', () => {
+	assert.deepEqual(createQueueSummaryPresentation({
+		itemTypes: 5,
+		copies: 5,
+		physicalCards: 11,
+		a4Pages: 2,
+	}), {
+		visible: '11 cards · 2 A4',
+		detail: '5 item types · 5 copies · 11 physical cards · 2 A4 pages',
+	});
+	assert.deepEqual(createQueueSummaryPresentation({
+		itemTypes: 1,
+		copies: 1,
+		physicalCards: 1,
+		a4Pages: 1,
+	}), {
+		visible: '1 cards · 1 A4',
+		detail: '1 item type · 1 copy · 1 physical card · 1 A4 page',
+	});
+});
+
+void test('queue provenance is rendered inside one wrapping title row', () => {
+	const view = readFileSync('src/views/card-forge-view.ts', 'utf8');
+	const css = readFileSync('styles.css', 'utf8');
+	const titleRowIndex = view.indexOf("cls: 'ttrpg-card-forge__queue-entry-title'");
+	const nameIndex = view.indexOf("cls: 'ttrpg-card-forge__queue-entry-name'", titleRowIndex);
+	const provenanceIndex = view.indexOf("cls: 'ttrpg-card-forge__queue-entry-provenance'", nameIndex);
+	const badgeIndex = view.indexOf("cls: 'ttrpg-card-forge__edited-badge'", provenanceIndex);
+	assert.ok(titleRowIndex >= 0 && nameIndex > titleRowIndex);
+	assert.ok(provenanceIndex > nameIndex && badgeIndex > provenanceIndex);
+	const titleRow = getCssRule(css, '.ttrpg-card-forge__queue-entry-title');
+	assert.match(titleRow, /display:\s*flex/iu);
+	assert.match(titleRow, /flex-wrap:\s*wrap/iu);
+	assert.doesNotMatch(getCssRule(css, '.ttrpg-card-forge__queue-entry-provenance'), /margin-block-start/iu);
+});
+
 void test('Edit mode uses one responsive preview container without changing canonical card sizing', () => {
 	const view = readFileSync('src/views/card-forge-view.ts', 'utf8');
 	const css = readFileSync('styles.css', 'utf8');
@@ -185,19 +222,27 @@ void test('Edit mode uses one responsive preview container without changing cano
 	const regionIndex = view.indexOf("cls: 'ttrpg-card-forge__card-preview-region'");
 	const blockIndex = view.indexOf("cls: 'ttrpg-card-forge__card-preview-block'", regionIndex);
 	const hostIndex = view.indexOf("cls: 'ttrpg-card-forge__card-host'", blockIndex);
+	const viewportIndex = view.indexOf("cls: 'ttrpg-card-forge__scaled-card-viewport'", hostIndex);
+	const scaledCardIndex = view.indexOf("cls: 'ttrpg-card-forge__scaled-card'", viewportIndex);
 	const diagnosticsIndex = view.indexOf("cls: 'ttrpg-card-forge__diagnostics'", hostIndex);
 	assert.ok(contentIndex >= 0 && editorIndex > contentIndex && regionIndex > editorIndex);
 	assert.ok(blockIndex > regionIndex);
-	assert.ok(hostIndex > blockIndex && diagnosticsIndex > hostIndex);
+	assert.ok(hostIndex > blockIndex && viewportIndex > hostIndex && scaledCardIndex > viewportIndex);
+	assert.ok(diagnosticsIndex > hostIndex);
 	assert.match(getCssRule(css, '.ttrpg-card-forge__preview'), /container-name:\s*ttrpg-card-forge-preview/iu);
 	assert.match(getCssRule(css, '.ttrpg-card-forge__preview-content'), /min-width:\s*0/iu);
+	assert.match(getCssRule(css, '.ttrpg-card-forge__preview-content'), /min-height:\s*min-content/iu);
 	assert.match(
 		getCssRule(css, '.ttrpg-card-forge__preview.is-editing .ttrpg-card-forge__preview-content'),
 		/grid-template-columns:\s*minmax\(16rem,\s*0\.8fr\)\s+minmax\(18rem,\s*1fr\)/iu,
 	);
 	assert.match(
 		css,
-		/@container ttrpg-card-forge-preview \(max-width:\s*44rem\)\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/su,
+		/@container ttrpg-card-forge-preview \(max-width:\s*44rem\)\s*\{[^}]*flex:\s*0\s+0\s+auto[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)[^}]*grid-template-rows:\s*auto\s+auto/su,
+	);
+	assert.match(
+		css,
+		/@container ttrpg-card-forge-preview \(max-width:\s*44rem\)[\s\S]*ttrpg-card-forge__editor[^}]*grid-row:\s*1[\s\S]*ttrpg-card-forge__card-preview-region[^}]*grid-row:\s*2/iu,
 	);
 	assert.doesNotMatch(css, /@media[^}]*ttrpg-card-forge__preview/isu);
 	assert.match(
@@ -208,7 +253,28 @@ void test('Edit mode uses one responsive preview container without changing cano
 		getCssRule(css, '.ttrpg-card-forge__card-host'),
 		/750|1050|transform|scale/u,
 	);
+	const viewport = getCssRule(css, '.ttrpg-card-forge__scaled-card-viewport');
+	assert.match(viewport, /position:\s*relative/iu);
+	assert.match(viewport, /aspect-ratio:\s*5\s*\/\s*7/iu);
+	assert.match(viewport, /overflow:\s*hidden/iu);
+	assert.doesNotMatch(css, /margin-(?:block-)?start:\s*(?:[2-9]\d{2,}|\d{4,})px/iu);
 	assert.match(view, /applyCanonicalCardSize\(physicalHost\)/u);
+});
+
+void test('workspace reflows before three columns squeeze the preview pane', () => {
+	const css = readFileSync('styles.css', 'utf8');
+	assert.match(
+		getCssRule(css, '.ttrpg-card-forge__workspace'),
+		/grid-template-columns:\s*minmax\(13rem,\s*18rem\)\s+minmax\(36rem,\s*1fr\)\s+minmax\(18rem,\s*22rem\)/iu,
+	);
+	assert.match(
+		css,
+		/@container ttrpg-card-forge \(max-width:\s*80rem\)[\s\S]*grid-template-columns:\s*minmax\(14rem,\s*18rem\)\s+minmax\(0,\s*1fr\)[\s\S]*ttrpg-card-forge__queue[^}]*grid-column:\s*1\s*\/\s*-1/iu,
+	);
+	assert.match(
+		css,
+		/@container ttrpg-card-forge \(max-width:\s*52rem\)[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)[\s\S]*ttrpg-card-forge__browser[^}]*max-height:\s*42vh/iu,
+	);
 });
 
 function getCssRule(css: string, selector: string): string {

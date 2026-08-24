@@ -6,12 +6,13 @@ This file tracks completed workflow milestones and intentionally deferred work.
 
 - Added bounded source/base/override provenance for structured card fields and included it in physical-plan identities.
 - Kept inherited base-equipment statistics available to Edit card while suppressing only inherited Cost on physical cards; source and explicit Cost still render.
-- Corrected real-data variant resolution for Armor of Cold Resistance, +1 Yklwa, and Monster Hunter's Weapon labels without item-name condition trees.
+- Separated indexed base resolution from safe family-wrapper selector labels, completing concise labels for Armor of Cold Resistance, +1 Yklwa, and indexed or unindexed Monster Hunter's Weapon variants without item-name condition trees.
+- Kept selected variant/base equipment rows in normal item content when a family Crafting section precedes the variant marker; actual recipe components remain on Crafting pages.
 - Preserved qualified attunement text for Retribution, Holy Avenger, Inexhaustible Armor, and other generic sources.
 - Normalized Obsidian callouts in card rules, including the real inline Multiweapon shape, without changing Source Note rendering or source Markdown.
 - Defined exact case-insensitive `Unknown` rarity as a non-printing physical-card sentinel while retaining values such as `Unknowns`.
-- Added subtle queue provenance only for meaningful explicit title edits; ordinary variant selection remains uncluttered.
-- Made Edit card responsive to its local preview container, stacking the editor and card preview at narrow notebook/split-pane widths while preserving canonical physical geometry.
+- Added subtle inline queue-title provenance only for meaningful explicit title edits, plus a compact physical-card/A4 summary with detailed counts retained as a tooltip; ordinary variant selection remains uncluttered.
+- Reflowed the outer workspace before its three columns can squeeze the preview, and made the locally responsive Edit card stack with a flow-reserving scaled-card viewport at narrow notebook/split-pane widths while preserving canonical physical geometry.
 
 ## Release roadmap
 

@@ -1,5 +1,6 @@
 import type { CardOverrides } from '../models/card-overrides';
 import type { ItemCardData } from '../models/item';
+import type { PrintQueueSummary } from './print-queue-planner';
 
 export type ArtworkEditorMode = 'source' | 'none' | 'vault' | 'local' | 'https';
 
@@ -163,6 +164,11 @@ export function resolveRulesDraftOverride(
 	return value === currentDefault ? undefined : value;
 }
 
+export interface QueueSummaryPresentation {
+	visible: string;
+	detail: string;
+}
+
 export function createQueueProvenanceLabel(
 	source: ItemCardData | undefined,
 	effective: ItemCardData | undefined,
@@ -179,6 +185,15 @@ export function createQueueProvenanceLabel(
 		return undefined;
 	}
 	return `from ${source.name}`;
+}
+
+export function createQueueSummaryPresentation(
+	summary: Pick<PrintQueueSummary, 'itemTypes' | 'copies' | 'physicalCards' | 'a4Pages'>,
+): QueueSummaryPresentation {
+	return {
+		visible: `${summary.physicalCards} cards · ${summary.a4Pages} A4`,
+		detail: `${summary.itemTypes} item ${summary.itemTypes === 1 ? 'type' : 'types'} · ${summary.copies} ${summary.copies === 1 ? 'copy' : 'copies'} · ${summary.physicalCards} physical ${summary.physicalCards === 1 ? 'card' : 'cards'} · ${summary.a4Pages} A4 ${summary.a4Pages === 1 ? 'page' : 'pages'}`,
+	};
 }
 
 function normalizeTitle(value: string): string {

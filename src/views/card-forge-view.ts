@@ -126,6 +126,7 @@ import {
 	createPreviewModeState,
 	createPreviewStatusChips,
 	createQueueProvenanceLabel,
+	createQueueSummaryPresentation,
 	createTemporaryArtworkStatus,
 	createVariantPreservationNotice,
 	getArtworkEditorPresentation,
@@ -2709,7 +2710,19 @@ export class CardForgeView extends ItemView {
 			return;
 		}
 		this.queueListElement.empty();
-		this.queueSummaryElement.setText(entryCount > 0 ? message : '0 item types · 0 copies · 0 physical cards · 0 A4 pages');
+		if (entryCount > 0) {
+			this.queueSummaryElement.setText(message);
+			this.queueSummaryElement.removeAttribute('title');
+		} else {
+			const emptySummary = createQueueSummaryPresentation({
+				itemTypes: 0,
+				copies: 0,
+				physicalCards: 0,
+				a4Pages: 0,
+			});
+			this.queueSummaryElement.setText(emptySummary.visible);
+			this.queueSummaryElement.setAttribute('title', emptySummary.detail);
+		}
 		if (entryCount === 0) {
 			this.queueListElement.createDiv({ cls: 'ttrpg-card-forge__empty', text: 'Add an item from the card preview.' });
 		}
@@ -2723,9 +2736,9 @@ export class CardForgeView extends ItemView {
 		}
 		this.queueListElement.empty();
 		const summary = calculatePrintQueueSummary(this.currentQueuePlan);
-		this.queueSummaryElement.setText(
-			`${summary.itemTypes} item ${summary.itemTypes === 1 ? 'type' : 'types'} · ${summary.copies} ${summary.copies === 1 ? 'copy' : 'copies'} · ${summary.physicalCards} physical ${summary.physicalCards === 1 ? 'card' : 'cards'} · ${summary.a4Pages} A4 ${summary.a4Pages === 1 ? 'page' : 'pages'}`,
-		);
+		const summaryPresentation = createQueueSummaryPresentation(summary);
+		this.queueSummaryElement.setText(summaryPresentation.visible);
+		this.queueSummaryElement.setAttribute('title', summaryPresentation.detail);
 		if (this.currentQueuePlan.length === 0) {
 			this.queueListElement.createDiv({ cls: 'ttrpg-card-forge__empty', text: 'Add an item from the card preview.' });
 		}
@@ -2748,7 +2761,8 @@ export class CardForgeView extends ItemView {
 			(item) => item.filePath === resolved.entry.filePath,
 		);
 		const details = row.createDiv({ cls: 'ttrpg-card-forge__queue-entry-details' });
-		details.createDiv({
+		const titleRow = details.createDiv({ cls: 'ttrpg-card-forge__queue-entry-title' });
+		titleRow.createDiv({
 			cls: 'ttrpg-card-forge__queue-entry-name',
 			text: resolved.item?.name ?? resolved.entry.filePath,
 		});
@@ -2758,7 +2772,7 @@ export class CardForgeView extends ItemView {
 			resolved.entry.overrides,
 		);
 		if (provenance) {
-			details.createDiv({
+			titleRow.createSpan({
 				cls: 'ttrpg-card-forge__queue-entry-provenance',
 				text: provenance,
 			});
