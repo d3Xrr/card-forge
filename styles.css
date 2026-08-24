@@ -251,6 +251,8 @@
 }
 
 .ttrpg-card-forge__preview {
+	container-name: ttrpg-card-forge-preview;
+	container-type: inline-size;
 	display: flex;
 	align-items: center;
 	flex-direction: column;
@@ -261,6 +263,16 @@
 	background:
 		radial-gradient(circle at 50% 35%, var(--background-primary-alt), transparent 58%),
 		var(--background-primary);
+}
+
+.ttrpg-card-forge__preview-content {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 1 1 auto;
+	width: 100%;
+	min-width: 0;
+	min-height: 0;
 }
 
 .ttrpg-card-forge__preview-header {
@@ -345,32 +357,29 @@
 }
 
 .ttrpg-card-forge__preview.is-editing {
+	align-items: stretch;
+}
+
+.ttrpg-card-forge__preview.is-editing .ttrpg-card-forge__preview-content {
 	display: grid;
 	grid-template-columns: minmax(16rem, 0.8fr) minmax(18rem, 1fr);
-	grid-template-rows: auto auto minmax(0, 1fr) auto auto;
 	align-items: start;
 	column-gap: var(--size-4-4);
 }
 
-.ttrpg-card-forge__preview.is-editing .ttrpg-card-forge__preview-header {
-	grid-column: 1 / -1;
-}
-
 .ttrpg-card-forge__preview.is-editing .ttrpg-card-forge__editor {
 	grid-column: 1;
-	grid-row: 2 / 6;
 }
 
 .ttrpg-card-forge__preview.is-editing .ttrpg-card-forge__card-preview-region {
 	grid-column: 2;
-	grid-row: 2 / 6;
 }
 
 .ttrpg-card-forge__preview.is-source-note {
 	align-items: stretch;
 }
 
-.ttrpg-card-forge__preview.is-source-note .ttrpg-card-forge__card-preview-region {
+.ttrpg-card-forge__preview.is-source-note .ttrpg-card-forge__preview-content {
 	display: none;
 }
 
@@ -636,6 +645,7 @@
 	justify-content: center;
 	flex: 1 1 auto;
 	width: 100%;
+	min-width: 0;
 	min-height: 0;
 }
 
@@ -715,6 +725,8 @@
 	color: var(--text-muted);
 	font-family: var(--font-interface);
 	font-size: var(--font-ui-smaller);
+	text-align: center;
+	overflow-wrap: anywhere;
 }
 
 .ttrpg-card-forge__diagnostics span + span::before {
@@ -944,6 +956,16 @@
 	font-size: var(--font-ui-smaller);
 }
 
+.ttrpg-card-forge__queue-entry-provenance {
+	margin-block-start: 2px;
+	overflow: hidden;
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+	font-style: italic;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .ttrpg-card-forge__queue-controls {
 	display: flex;
 	align-items: center;
@@ -1025,12 +1047,26 @@
 		border-block-start: 1px solid var(--background-modifier-border);
 	}
 
-	.ttrpg-card-forge__preview.is-editing {
-		display: flex;
+}
+
+/* 44rem keeps the 16rem editor and a useful card preview side by side with breathing room. */
+@container ttrpg-card-forge-preview (max-width: 44rem) {
+	.ttrpg-card-forge__preview.is-editing .ttrpg-card-forge__preview-content {
+		grid-template-columns: minmax(0, 1fr);
+		row-gap: var(--size-4-4);
 	}
 
-	.ttrpg-card-forge__editor {
-		max-height: 32rem;
+	.ttrpg-card-forge__preview.is-editing .ttrpg-card-forge__editor,
+	.ttrpg-card-forge__preview.is-editing .ttrpg-card-forge__card-preview-region {
+		grid-column: 1;
+	}
+
+	.ttrpg-card-forge__preview.is-editing .ttrpg-card-forge__editor {
+		max-height: none;
+	}
+
+	.ttrpg-card-forge__card-preview-block {
+		max-width: 100%;
 	}
 }
 

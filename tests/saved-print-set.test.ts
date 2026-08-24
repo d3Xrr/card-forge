@@ -3,6 +3,9 @@ import test from 'node:test';
 
 import { SavedPrintSetService } from '../src/models/saved-print-set';
 import { PrintQueueService } from '../src/models/print-queue';
+import type { ItemCardData } from '../src/models/item';
+import { applyCardOverrides } from '../src/services/card-overrides';
+import { createQueueProvenanceLabel } from '../src/services/live-edit-ui';
 import { TemporaryArtworkStore } from '../src/services/temporary-artwork-store';
 
 function createQueue(prefix = 'queue'): PrintQueueService {
@@ -176,6 +179,22 @@ void test('loading replaces once with fresh IDs, preserved order/quantity, and i
 		kind: 'vault',
 		path: 'Card Forge Assets/wand.webp',
 	});
+	const source: ItemCardData = {
+		filePath: 'items/weapon.md',
+		name: '+1 Weapon',
+		description: 'Source rules',
+		hasImage: false,
+		rawTags: [],
+	};
+	const loadedWeapon = firstLoad.entries[0]!;
+	assert.equal(
+		createQueueProvenanceLabel(
+			source,
+			applyCardOverrides(source, loadedWeapon.overrides).item,
+			loadedWeapon.overrides,
+		),
+		'from +1 Weapon',
+	);
 	const firstIds = firstLoad.entries.map((entry) => entry.id);
 	const beforeDeclinedReplacement = structuredClone(queue.getEntries());
 	assert.equal(sets.loadIntoQueue(saved.set.id, queue, available).status, 'requires-confirmation');

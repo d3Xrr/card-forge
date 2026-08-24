@@ -13,6 +13,7 @@ import {
 } from '../src/models/print-queue';
 import { applyCardOverrides } from '../src/services/card-overrides';
 import { createEffectiveCardInput } from '../src/services/effective-card';
+import { createQueueProvenanceLabel } from '../src/services/live-edit-ui';
 import type { ItemCardData } from '../src/models/item';
 import type { CardOverrides } from '../src/models/card-overrides';
 
@@ -162,6 +163,14 @@ void test('duplicates a complete logical entry immediately after its source with
 	assert.deepEqual(
 		applyCardOverrides(baseItem, duplicate.overrides).item,
 		applyCardOverrides(baseItem, source.overrides).item,
+	);
+	assert.equal(
+		createQueueProvenanceLabel(
+			baseItem,
+			applyCardOverrides(baseItem, duplicate.overrides).item,
+			duplicate.overrides,
+		),
+		'from +1 Weapon',
 	);
 
 	queue.updateOverrides(source.id, {

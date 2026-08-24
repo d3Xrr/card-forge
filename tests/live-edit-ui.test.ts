@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import type { ItemCardData } from '../src/models/item';
 import { createCardOverridesFingerprint } from '../src/services/card-overrides';
 import { resetDraftField } from '../src/services/card-editor-draft';
 import {
 	createMissingArtworkWarning,
 	createPreviewModeState,
 	createPreviewStatusChips,
+	createQueueProvenanceLabel,
 	createTemporaryArtworkStatus,
 	createVariantPreservationNotice,
 	getArtworkEditorPresentation,
@@ -15,6 +17,14 @@ import {
 	resolveRulesDraftOverride,
 	validateVaultArtworkPath,
 } from '../src/services/live-edit-ui';
+
+const queueSource: ItemCardData = {
+	filePath: 'items/plus-one-weapon.md',
+	name: '+1 Weapon',
+	description: 'Source rules',
+	hasImage: false,
+	rawTags: [],
+};
 
 void test('variant preservation notice uses the approved copy and clears with canonical text', () => {
 	assert.deepEqual(createVariantPreservationNotice('Warhammer', true), {
@@ -147,23 +157,49 @@ void test('preview toolbar chips are concise UI state and do not enter override 
 	});
 });
 
-void test('Edit mode centers one card-and-metadata block in a dedicated preview region', () => {
+void test('queue provenance is reserved for explicit title edits and omits paths', () => {
+	assert.equal(createQueueProvenanceLabel(queueSource, queueSource, undefined), undefined);
+	assert.equal(createQueueProvenanceLabel(
+		queueSource,
+		{ ...queueSource, name: '+1 Quarterstaff' },
+		{ variant: { id: 'quarterstaff' } },
+	), undefined);
+	assert.equal(createQueueProvenanceLabel(
+		queueSource,
+		{ ...queueSource, name: 'The Spindle' },
+		{ title: 'The Spindle' },
+	), 'from +1 Weapon');
+	assert.equal(createQueueProvenanceLabel(
+		queueSource,
+		{ ...queueSource, name: '+1 Weapon' },
+		{ title: ' +1 Weapon ' },
+	), undefined);
+	assert.equal(createQueueProvenanceLabel(undefined, undefined, { title: 'The Spindle' }), undefined);
+});
+
+void test('Edit mode uses one responsive preview container without changing canonical card sizing', () => {
 	const view = readFileSync('src/views/card-forge-view.ts', 'utf8');
 	const css = readFileSync('styles.css', 'utf8');
+	const contentIndex = view.indexOf("cls: 'ttrpg-card-forge__preview-content'");
+	const editorIndex = view.indexOf("cls: 'ttrpg-card-forge__editor'", contentIndex);
 	const regionIndex = view.indexOf("cls: 'ttrpg-card-forge__card-preview-region'");
 	const blockIndex = view.indexOf("cls: 'ttrpg-card-forge__card-preview-block'", regionIndex);
 	const hostIndex = view.indexOf("cls: 'ttrpg-card-forge__card-host'", blockIndex);
 	const diagnosticsIndex = view.indexOf("cls: 'ttrpg-card-forge__diagnostics'", hostIndex);
-	assert.ok(regionIndex >= 0 && blockIndex > regionIndex);
+	assert.ok(contentIndex >= 0 && editorIndex > contentIndex && regionIndex > editorIndex);
+	assert.ok(blockIndex > regionIndex);
 	assert.ok(hostIndex > blockIndex && diagnosticsIndex > hostIndex);
+	assert.match(getCssRule(css, '.ttrpg-card-forge__preview'), /container-name:\s*ttrpg-card-forge-preview/iu);
+	assert.match(getCssRule(css, '.ttrpg-card-forge__preview-content'), /min-width:\s*0/iu);
 	assert.match(
-		css,
-		/ttrpg-card-forge__preview\.is-editing \.ttrpg-card-forge__card-preview-region[^}]*grid-column:\s*2[^}]*grid-row:\s*2\s*\/\s*6/su,
+		getCssRule(css, '.ttrpg-card-forge__preview.is-editing .ttrpg-card-forge__preview-content'),
+		/grid-template-columns:\s*minmax\(16rem,\s*0\.8fr\)\s+minmax\(18rem,\s*1fr\)/iu,
 	);
 	assert.match(
 		css,
-		/^\.ttrpg-card-forge__card-preview-region\s*\{[^}]*justify-content:\s*center/msu,
+		/@container ttrpg-card-forge-preview \(max-width:\s*44rem\)\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/su,
 	);
+	assert.doesNotMatch(css, /@media[^}]*ttrpg-card-forge__preview/isu);
 	assert.match(
 		getCssRule(css, '.ttrpg-card-forge__card-preview-block'),
 		/width:\s*min\(100%,\s*25rem\)/u,

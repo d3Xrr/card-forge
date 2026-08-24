@@ -125,6 +125,7 @@ import {
 	createMissingArtworkWarning,
 	createPreviewModeState,
 	createPreviewStatusChips,
+	createQueueProvenanceLabel,
 	createTemporaryArtworkStatus,
 	createVariantPreservationNotice,
 	getArtworkEditorPresentation,
@@ -196,6 +197,7 @@ export class CardForgeView extends ItemView {
 	private sourceNoteElement: HTMLElement | null = null;
 	private sourceNoteContentElement: HTMLElement | null = null;
 	private previewActionsElement: HTMLElement | null = null;
+	private previewElement: HTMLElement | null = null;
 	private pageNavigationElement: HTMLElement | null = null;
 	private previousPageButton: HTMLButtonElement | null = null;
 	private nextPageButton: HTMLButtonElement | null = null;
@@ -591,6 +593,7 @@ export class CardForgeView extends ItemView {
 			cls: 'ttrpg-card-forge__preview',
 			attr: { 'aria-label': 'Card preview' },
 		});
+		this.previewElement = preview;
 		const previewHeader = preview.createDiv({ cls: 'ttrpg-card-forge__preview-header' });
 		previewHeader.createEl('h3', {
 			text: 'Card preview',
@@ -639,9 +642,12 @@ export class CardForgeView extends ItemView {
 		this.registerDomEvent(this.previewModeButton, 'click', () => this.setPreviewMode('preview'));
 		this.registerDomEvent(this.editModeButton, 'click', () => this.setPreviewMode('edit'));
 		this.registerDomEvent(this.sourceModeButton, 'click', () => this.setPreviewMode('source-note'));
-		this.editorElement = preview.createDiv({ cls: 'ttrpg-card-forge__editor' });
+		const previewContent = preview.createDiv({
+			cls: 'ttrpg-card-forge__preview-content',
+		});
+		this.editorElement = previewContent.createDiv({ cls: 'ttrpg-card-forge__editor' });
 		this.editorElement.hidden = true;
-		const previewRegion = preview.createDiv({ cls: 'ttrpg-card-forge__card-preview-region' });
+		const previewRegion = previewContent.createDiv({ cls: 'ttrpg-card-forge__card-preview-region' });
 		const previewBlock = previewRegion.createDiv({ cls: 'ttrpg-card-forge__card-preview-block' });
 		this.cardHostElement = previewBlock.createDiv({ cls: 'ttrpg-card-forge__card-host' });
 		this.diagnosticsElement = previewBlock.createDiv({ cls: 'ttrpg-card-forge__diagnostics' });
@@ -1436,8 +1442,8 @@ export class CardForgeView extends ItemView {
 		this.sourceNoteElement?.toggleAttribute('hidden', !modeState.showSourceNote);
 		this.previewActionsElement?.toggleAttribute('hidden', !modeState.showGlobalPreviewActions);
 		this.previewIndicatorElement?.toggleAttribute('hidden', modeState.showSourceNote);
-		this.editorElement.parentElement?.toggleClass('is-editing', modeState.showEditor);
-		this.editorElement.parentElement?.toggleClass('is-source-note', modeState.showSourceNote);
+		this.previewElement?.toggleClass('is-editing', modeState.showEditor);
+		this.previewElement?.toggleClass('is-source-note', modeState.showSourceNote);
 		this.previewModeButton?.toggleClass('is-active', modeState.previewActive);
 		this.editModeButton?.toggleClass('is-active', modeState.editActive);
 		this.sourceModeButton?.toggleClass('is-active', modeState.sourceActive);
@@ -2738,11 +2744,25 @@ export class CardForgeView extends ItemView {
 		const row = this.queueListElement.createDiv({
 			cls: `ttrpg-card-forge__queue-entry${resolved.unavailable ? ' is-unavailable' : ''}${resolved.temporaryArtworkUnavailable ? ' has-warning' : ''}`,
 		});
+		const source = this.itemIndex.getItems().find(
+			(item) => item.filePath === resolved.entry.filePath,
+		);
 		const details = row.createDiv({ cls: 'ttrpg-card-forge__queue-entry-details' });
 		details.createDiv({
 			cls: 'ttrpg-card-forge__queue-entry-name',
 			text: resolved.item?.name ?? resolved.entry.filePath,
 		});
+		const provenance = createQueueProvenanceLabel(
+			source,
+			resolved.item,
+			resolved.entry.overrides,
+		);
+		if (provenance) {
+			details.createDiv({
+				cls: 'ttrpg-card-forge__queue-entry-provenance',
+				text: provenance,
+			});
+		}
 		if (resolved.entry.overrides) {
 			details.createSpan({ cls: 'ttrpg-card-forge__edited-badge', text: 'Edited for print' });
 		}
@@ -2754,9 +2774,6 @@ export class CardForgeView extends ItemView {
 				? 'Content does not fit a physical card — export blocked'
 				: `${resolved.pages.length} ${resolved.pages.length === 1 ? 'card' : 'cards'} per copy · ${resolved.pages.length * resolved.entry.quantity} total`;
 		details.createDiv({ cls: 'ttrpg-card-forge__queue-entry-meta', text: metadata });
-		const source = this.itemIndex.getItems().find(
-			(item) => item.filePath === resolved.entry.filePath,
-		);
 		const artworkWarning = createMissingArtworkWarning(
 			Boolean(resolved.temporaryArtworkUnavailable),
 			Boolean(source?.hasImage),

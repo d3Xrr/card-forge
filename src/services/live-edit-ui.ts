@@ -1,3 +1,6 @@
+import type { CardOverrides } from '../models/card-overrides';
+import type { ItemCardData } from '../models/item';
+
 export type ArtworkEditorMode = 'source' | 'none' | 'vault' | 'local' | 'https';
 
 export interface VariantPreservationNotice {
@@ -158,4 +161,26 @@ export function resolveRulesDraftOverride(
 	currentDefault: string,
 ): string | undefined {
 	return value === currentDefault ? undefined : value;
+}
+
+export function createQueueProvenanceLabel(
+	source: ItemCardData | undefined,
+	effective: ItemCardData | undefined,
+	overrides: CardOverrides | undefined,
+): string | undefined {
+	const explicitTitle = overrides?.title?.trim();
+	if (!source || !effective || !explicitTitle) {
+		return undefined;
+	}
+	if (
+		normalizeTitle(explicitTitle) === normalizeTitle(source.name)
+		|| normalizeTitle(effective.name) === normalizeTitle(source.name)
+	) {
+		return undefined;
+	}
+	return `from ${source.name}`;
+}
+
+function normalizeTitle(value: string): string {
+	return value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase();
 }
