@@ -4,6 +4,7 @@ import { ItemIndex, type ItemIndexResult } from './services/item-index';
 import {
 	PrintQueueService,
 } from './models/print-queue';
+import { SavedPrintSetService } from './models/saved-print-set';
 import type { ItemCardData } from './models/item';
 import {
 	DEFAULT_SETTINGS,
@@ -23,29 +24,45 @@ import {
 	TemporaryArtworkStore,
 } from './services/temporary-artwork-store';
 import { normalizeArtworkAssetFolder } from './services/artwork-importer-core';
+import {
+	addCurrentIndexedItemToQueue,
+	resolveCurrentIndexedItem,
+} from './services/current-item-workflow';
 
 const INDEX_REBUILD_DELAY_MS = 350;
 const QUEUE_ARTWORK_OWNER = 'print-queue';
+const SAVED_SET_ARTWORK_OWNER = 'saved-print-sets';
+
+interface LoadedPluginData {
+	printQueue?: unknown;
+	savedPrintSets?: unknown;
+}
 
 export default class TTRPGCardForgePlugin extends Plugin {
 	settings: CardForgeSettings = DEFAULT_SETTINGS;
 	itemIndex!: ItemIndex;
 	printQueue!: PrintQueueService;
+	savedPrintSets!: SavedPrintSetService;
 	readonly planningPerformance = new PlanningPerformanceMonitor();
 	readonly physicalPlanCache = new PhysicalPlanCache<FittedItemCardPlan>();
 	readonly temporaryArtworkStore = new TemporaryArtworkStore();
 	private indexedInputFingerprints = new Map<string, string>();
 	private rebuildTimer: number | null = null;
+	private initialIndexReady = false;
+	private indexReadyPromise: Promise<ItemIndexResult> | null = null;
 	private unsubscribeFromIndex: (() => void) | null = null;
 	private unsubscribeFromQueue: (() => void) | null = null;
+	private unsubscribeFromSavedPrintSets: (() => void) | null = null;
 	private removePerformanceDebugApi: (() => void) | null = null;
 	private saveChain: Promise<void> = Promise.resolve();
 
 	async onload(): Promise<void> {
-		const savedQueue = await this.loadPluginData();
+		const saved = await this.loadPluginData();
 		this.itemIndex = new ItemIndex(this.app);
-		this.printQueue = new PrintQueueService(savedQueue);
+		this.printQueue = new PrintQueueService(saved.printQueue);
+		this.savedPrintSets = new SavedPrintSetService(saved.savedPrintSets);
 		this.syncQueueTemporaryArtworkReferences();
+		this.syncSavedSetTemporaryArtworkReferences();
 		this.removePerformanceDebugApi = this.planningPerformance.installDebugApi(window);
 		this.unsubscribeFromIndex = this.itemIndex.subscribe((items) => {
 			this.reconcilePhysicalPlanCache(items);
@@ -56,9 +73,15 @@ export default class TTRPGCardForgePlugin extends Plugin {
 				console.error('TTRPG Card Forge: could not persist print queue', error);
 			});
 		});
-		if (this.printQueue.hydrationRepaired) {
+		this.unsubscribeFromSavedPrintSets = this.savedPrintSets.subscribe(() => {
+			this.syncSavedSetTemporaryArtworkReferences();
 			void this.persistPluginData().catch((error: unknown) => {
-				console.error('TTRPG Card Forge: could not persist repaired print queue identities', error);
+				console.error('TTRPG Card Forge: could not persist saved print sets', error);
+			});
+		});
+		if (this.printQueue.hydrationRepaired || this.savedPrintSets.hydrationRepaired) {
+			void this.persistPluginData().catch((error: unknown) => {
+				console.error('TTRPG Card Forge: could not persist repaired plugin data', error);
 			});
 		}
 
@@ -68,6 +91,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 				leaf,
 				this.itemIndex,
 				this.printQueue,
+				this.savedPrintSets,
 				() => this.settings,
 				this.physicalPlanCache,
 				this.planningPerformance,
@@ -84,6 +108,20 @@ export default class TTRPGCardForgePlugin extends Plugin {
 			name: 'Open Card Forge',
 			callback: () => {
 				void this.activateView();
+			},
+		});
+		this.addCommand({
+			id: 'open-current-item-in-card-forge',
+			name: 'Open current item in Card Forge',
+			callback: () => {
+				void this.openCurrentItemInCardForge();
+			},
+		});
+		this.addCommand({
+			id: 'add-current-item-to-print-queue',
+			name: 'Add current item to print queue',
+			callback: () => {
+				void this.addCurrentItemToPrintQueue();
 			},
 		});
 
@@ -136,7 +174,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		}));
 
 		this.app.workspace.onLayoutReady(() => {
-			void this.rebuildItemIndex().catch(() => undefined);
+			void this.ensureItemIndexReady().catch(() => undefined);
 		});
 	}
 
@@ -145,6 +183,8 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		this.unsubscribeFromIndex = null;
 		this.unsubscribeFromQueue?.();
 		this.unsubscribeFromQueue = null;
+		this.unsubscribeFromSavedPrintSets?.();
+		this.unsubscribeFromSavedPrintSets = null;
 		this.removePerformanceDebugApi?.();
 		this.removePerformanceDebugApi = null;
 		this.physicalPlanCache.clear();
@@ -156,7 +196,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		}
 	}
 
-	async activateView(): Promise<void> {
+	async activateView(): Promise<CardForgeView | undefined> {
 		const existingLeaf = this.app.workspace.getLeavesOfType(CARD_FORGE_VIEW_TYPE)[0];
 		const trace = this.planningPerformance.start(
 			existingLeaf ? 'warm-refocus' : 'cold-open',
@@ -172,7 +212,9 @@ export default class TTRPGCardForgePlugin extends Plugin {
 			} else {
 				await this.app.workspace.revealLeaf(existingLeaf);
 			}
-			return;
+			return existingLeaf.view instanceof CardForgeView
+				? existingLeaf.view
+				: undefined;
 		}
 
 		const leaf = this.app.workspace.getLeaf('tab');
@@ -190,6 +232,41 @@ export default class TTRPGCardForgePlugin extends Plugin {
 			await leaf.setViewState({ type: CARD_FORGE_VIEW_TYPE, active: true });
 			await this.app.workspace.revealLeaf(leaf);
 		}
+		return leaf.view instanceof CardForgeView ? leaf.view : undefined;
+	}
+
+	private async openCurrentItemInCardForge(): Promise<void> {
+		const item = await this.resolveActiveIndexedItem();
+		if (!item) {
+			new Notice('Current note is not an indexed Card Forge item.');
+			return;
+		}
+		const view = await this.activateView();
+		if (!view?.selectItemForPreview(item.filePath)) {
+			new Notice('TTRPG Card Forge could not open the current item.');
+		}
+	}
+
+	private async addCurrentItemToPrintQueue(): Promise<void> {
+		const item = await this.resolveActiveIndexedItem();
+		if (!item) {
+			new Notice('Current note is not an indexed Card Forge item.');
+			return;
+		}
+		addCurrentIndexedItemToQueue(this.printQueue, item);
+		new Notice(`Added ${item.name} to Card Forge print queue.`);
+	}
+
+	private async resolveActiveIndexedItem(): Promise<ItemCardData | undefined> {
+		try {
+			await this.ensureItemIndexReady();
+		} catch {
+			return undefined;
+		}
+		return resolveCurrentIndexedItem(
+			this.itemIndex.getItems(),
+			this.app.workspace.getActiveFile(),
+		);
 	}
 
 	async updateItemFolder(itemFolder: string): Promise<void> {
@@ -202,6 +279,12 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		this.settings.pdfExportFolder = pdfExportFolder.trim()
 			|| DEFAULT_SETTINGS.pdfExportFolder;
 		await this.persistPluginData();
+		await Promise.all(
+			this.app.workspace.getLeavesOfType(CARD_FORGE_VIEW_TYPE)
+				.map((leaf) => leaf.view)
+				.filter((view): view is CardForgeView => view instanceof CardForgeView)
+				.map((view) => view.onPdfExportFolderChanged()),
+		);
 	}
 
 	async updateCardForgeAssetsFolder(cardForgeAssetsFolder: string): Promise<void> {
@@ -225,13 +308,32 @@ export default class TTRPGCardForgePlugin extends Plugin {
 			this.rebuildTimer = null;
 		}
 
+		const rebuild = this.itemIndex.rebuild(this.settings.itemFolder);
+		this.indexReadyPromise = rebuild;
 		try {
-			return await this.itemIndex.rebuild(this.settings.itemFolder);
+			const result = await rebuild;
+			this.initialIndexReady = true;
+			return result;
 		} catch (error) {
 			console.error('TTRPG Card Forge: item index rebuild failed', error);
 			new Notice('TTRPG Card Forge could not rebuild the item index. See the developer console for details.');
 			throw error;
+		} finally {
+			if (this.indexReadyPromise === rebuild) {
+				this.indexReadyPromise = null;
+			}
 		}
+	}
+
+	private async ensureItemIndexReady(): Promise<void> {
+		if (this.initialIndexReady) {
+			return;
+		}
+		if (this.indexReadyPromise) {
+			await this.indexReadyPromise;
+			return;
+		}
+		await this.rebuildItemIndex();
 	}
 
 	private queueIndexRebuild(delay = INDEX_REBUILD_DELAY_MS): void {
@@ -291,9 +393,9 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		this.queueIndexRebuild(0);
 	}
 
-	private async loadPluginData(): Promise<unknown> {
+	private async loadPluginData(): Promise<LoadedPluginData> {
 		const saved = await this.loadData() as (
-			Partial<CardForgeSettings> & { printQueue?: unknown }
+			Partial<CardForgeSettings> & LoadedPluginData
 		) | null;
 		this.settings = {
 			itemFolder: typeof saved?.itemFolder === 'string'
@@ -312,13 +414,17 @@ export default class TTRPGCardForgePlugin extends Plugin {
 				? saved.openPdfAfterExport
 				: DEFAULT_SETTINGS.openPdfAfterExport,
 		};
-		return saved?.printQueue;
+		return {
+			printQueue: saved?.printQueue,
+			savedPrintSets: saved?.savedPrintSets,
+		};
 	}
 
 	private persistPluginData(): Promise<void> {
 		this.saveChain = this.saveChain.catch(() => undefined).then(() => this.saveData({
 			...this.settings,
 			printQueue: this.printQueue.serialize(),
+			savedPrintSets: this.savedPrintSets.serialize(),
 		}));
 		return this.saveChain;
 	}
@@ -328,6 +434,17 @@ export default class TTRPGCardForgePlugin extends Plugin {
 			QUEUE_ARTWORK_OWNER,
 			collectTemporaryArtworkIds(
 				this.printQueue.getEntries().map((entry) => entry.overrides),
+			),
+		);
+	}
+
+	private syncSavedSetTemporaryArtworkReferences(): void {
+		this.temporaryArtworkStore.setOwnerReferences(
+			SAVED_SET_ARTWORK_OWNER,
+			collectTemporaryArtworkIds(
+				this.savedPrintSets.getSets().flatMap((set) =>
+					set.entries.map((entry) => entry.overrides),
+				),
 			),
 		);
 	}

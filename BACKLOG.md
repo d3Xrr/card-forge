@@ -12,13 +12,21 @@ This file tracks completed workflow milestones and intentionally deferred work.
 - Configurable vault-relative **Card Forge Assets folder** for future persistent artwork imports; existing explicit artwork paths remain unchanged.
 - Theme-compatible native browser filters, centered Edit preview region, and per-source session scroll memory for Source Note.
 
+## Implemented in Phase 4D
+
+- Persistent Saved Print Sets with snapshot-based save, rename, delete, and confirmed queue replacement.
+- Export Gallery for canonical Card Forge PDFs in the configured vault export folder, with Open and recoverable Delete actions.
+- **Open current item in Card Forge** and **Add current item to print queue** command-palette workflows.
+- Queue-entry **Duplicate** convenience with fresh IDs and independent print overrides.
+- Compact right-side **Print queue | Saved sets | Exports** workflow navigation.
+
 ## Future Phase 4C follow-ups
 
 - Favorites.
 - Recently used items.
-- Saved print sets.
-- Export Gallery and saved-export management.
-- Queue-entry duplicate convenience.
+- Optional per-row Add action in the item browser.
+- Saved Print Set append/merge behavior.
+- Richer Export Gallery metadata or thumbnails.
 - Further Preview/Source navigation decisions after manual workflow testing.
 
 ### Preview navigation / pagination layout revisit
@@ -50,14 +58,6 @@ Consider bounded field-visibility customization for magic variants that inherit 
 ## Artwork persistence choice before import
 
 Move the **Save to vault** choice before the temporary local-file selection or HTTPS fetch so it applies to that import action. Currently the artwork is already temporary when the choice appears, requiring the user to select or load it again to persist it. Optionally investigate a secondary **Save current artwork to vault** action for artwork that is already loaded temporarily. Do not redesign this behavior for 0.4.0.
-
-## Navigation
-
-### Open current item in Card Forge command
-
-Add a future command-palette action available while viewing an item Markdown note: **TTRPG Card Forge: Open current item in Card Forge**. It should detect the active Markdown file, verify or resolve that it is an indexed Card Forge item, open or focus Card Forge, select that exact item, and show its canonical Preview immediately. A note that is not a recognized item should produce a small Notice instead of failing.
-
-This would provide a fast transition from ordinary vault browsing into the print workflow, especially alongside the future Source Note tab, Export Gallery, and batch/print workflow improvements. A later companion command could be **TTRPG Card Forge: Add current item to print queue**. Do not implement either command as part of the 0.4.1 bullet-marker patch.
 
 ## Activation profiling follow-up
 

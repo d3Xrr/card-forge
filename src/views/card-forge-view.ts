@@ -1,10 +1,21 @@
-import { ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf } from 'obsidian';
+import {
+	ItemView,
+	MarkdownRenderer,
+	Notice,
+	TFile,
+	TFolder,
+	WorkspaceLeaf,
+} from 'obsidian';
 
 import { PdfExportService, type PdfExportProgress } from '../export/pdf-export-service';
 import { A4_CARDS_PER_SHEET } from '../export/a4-sheet-geometry';
 import type { ItemCardData } from '../models/item';
 import type { ItemCardPage } from '../models/item-card-page';
 import type { PrintQueueService } from '../models/print-queue';
+import type {
+	SavedPrintSet,
+	SavedPrintSetService,
+} from '../models/saved-print-set';
 import type { CardOverrides } from '../models/card-overrides';
 import {
 	applyCanonicalCardSize,
@@ -118,9 +129,21 @@ import {
 	type PreviewMode,
 	type VariantPreservationNotice,
 } from '../services/live-edit-ui';
+import {
+	buildExportGalleryState,
+	deleteGalleryExport,
+	openGalleryExport,
+	type ExportGalleryFileInfo,
+} from '../services/export-gallery';
+import { normalizeExportFolder } from '../export/vault-pdf-storage';
+import {
+	confirmWorkflowAction,
+	promptForText,
+} from './workflow-modals';
 
 export const CARD_FORGE_VIEW_TYPE = 'ttrpg-card-forge-view';
 const PHYSICAL_PLAN_RENDER_SETTINGS_FINGERPRINT = 'card-render-settings-v3-live-edit';
+type WorkflowMode = 'queue' | 'saved-sets' | 'exports';
 
 interface PhysicalPlanLookup {
 	identity: PhysicalPlanCacheIdentity;
@@ -178,6 +201,12 @@ export class CardForgeView extends ItemView {
 	private exportButton: HTMLButtonElement | null = null;
 	private clearQueueButton: HTMLButtonElement | null = null;
 	private openLastPdfButton: HTMLButtonElement | null = null;
+	private workflowQueueElement: HTMLElement | null = null;
+	private workflowAuxElement: HTMLElement | null = null;
+	private queueModeButton: HTMLButtonElement | null = null;
+	private savedSetsModeButton: HTMLButtonElement | null = null;
+	private exportsModeButton: HTMLButtonElement | null = null;
+	private savePrintSetButton: HTMLButtonElement | null = null;
 	private sheetGridElement: HTMLElement | null = null;
 	private sheetLabelElement: HTMLElement | null = null;
 	private previousSheetButton: HTMLButtonElement | null = null;
@@ -186,6 +215,7 @@ export class CardForgeView extends ItemView {
 	private lastPdfFile: TFile | null = null;
 	private unsubscribeFromIndex: (() => void) | null = null;
 	private unsubscribeFromQueue: (() => void) | null = null;
+	private unsubscribeFromSavedPrintSets: (() => void) | null = null;
 	private overflowFrame: number | null = null;
 	private cardResizeObserver: ResizeObserver | null = null;
 	private previewGeneration = 0;
@@ -202,6 +232,8 @@ export class CardForgeView extends ItemView {
 	private currentArtworkRevisionFingerprint: string | undefined;
 	private currentPreviewPlanKey: string | undefined;
 	private exportInProgress = false;
+	private workflowMode: WorkflowMode = 'queue';
+	private exportGalleryGeneration = 0;
 	private previewMode: PreviewMode = 'preview';
 	private sourceNoteGeneration = 0;
 	private sourceNoteScrollFrame: number | null = null;
@@ -226,6 +258,7 @@ export class CardForgeView extends ItemView {
 		leaf: WorkspaceLeaf,
 		private readonly itemIndex: ItemIndex,
 		private readonly printQueue: PrintQueueService,
+		private readonly savedPrintSets: SavedPrintSetService,
 		private readonly getSettings: () => Readonly<CardForgeSettings>,
 		private readonly physicalPlanCache: PhysicalPlanCache<FittedItemCardPlan>,
 		private readonly planningPerformance: PlanningPerformanceMonitor,
@@ -270,7 +303,7 @@ export class CardForgeView extends ItemView {
 		const workspace = container.createDiv({ cls: 'ttrpg-card-forge__workspace' });
 		this.buildBrowser(workspace);
 		this.buildPreview(workspace);
-		this.buildQueue(workspace);
+		this.buildWorkflow(workspace);
 
 		if (this.searchInput) {
 			this.registerDomEvent(this.searchInput, 'input', () => {
@@ -326,6 +359,11 @@ export class CardForgeView extends ItemView {
 		if (this.clearQueueButton) {
 			this.registerDomEvent(this.clearQueueButton, 'click', () => this.printQueue.clear());
 		}
+		if (this.savePrintSetButton) {
+			this.registerDomEvent(this.savePrintSetButton, 'click', () => {
+				void this.saveCurrentQueueAsPrintSet();
+			});
+		}
 		if (this.exportButton) {
 			this.registerDomEvent(this.exportButton, 'click', () => {
 				void this.exportPdf();
@@ -341,6 +379,15 @@ export class CardForgeView extends ItemView {
 		}
 		if (this.nextSheetButton) {
 			this.registerDomEvent(this.nextSheetButton, 'click', () => this.showRelativeSheet(1));
+		}
+		if (this.queueModeButton) {
+			this.registerDomEvent(this.queueModeButton, 'click', () => this.setWorkflowMode('queue'));
+		}
+		if (this.savedSetsModeButton) {
+			this.registerDomEvent(this.savedSetsModeButton, 'click', () => this.setWorkflowMode('saved-sets'));
+		}
+		if (this.exportsModeButton) {
+			this.registerDomEvent(this.exportsModeButton, 'click', () => this.setWorkflowMode('exports'));
 		}
 
 		this.unsubscribeFromIndex = this.itemIndex.subscribe(() => {
@@ -377,14 +424,30 @@ export class CardForgeView extends ItemView {
 			this.currentSheetIndex = 0;
 			this.renderQueue();
 		});
+		this.unsubscribeFromSavedPrintSets = this.savedPrintSets.subscribe(() => {
+			if (this.workflowMode === 'saved-sets') {
+				this.renderSavedPrintSets();
+			}
+		});
+		this.registerEvent(this.app.vault.on('create', (file) => {
+			this.refreshExportsForVaultChange(file.path);
+		}));
+		this.registerEvent(this.app.vault.on('delete', (file) => {
+			this.refreshExportsForVaultChange(file.path);
+		}));
+		this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
+			this.refreshExportsForVaultChange(file.path, oldPath);
+		}));
 		this.render();
 	}
 
 	async onClose(): Promise<void> {
 		this.unsubscribeFromIndex?.();
 		this.unsubscribeFromQueue?.();
+		this.unsubscribeFromSavedPrintSets?.();
 		this.unsubscribeFromIndex = null;
 		this.unsubscribeFromQueue = null;
+		this.unsubscribeFromSavedPrintSets = null;
 		if (this.overflowFrame !== null) {
 			window.cancelAnimationFrame(this.overflowFrame);
 		}
@@ -396,6 +459,7 @@ export class CardForgeView extends ItemView {
 		this.previewRequestGate.invalidate();
 		this.queueRequestGate.invalidate();
 		this.sourceNoteGeneration += 1;
+		this.exportGalleryGeneration += 1;
 		this.rememberSourceNoteScroll();
 		if (this.sourceNoteScrollFrame !== null) {
 			window.cancelAnimationFrame(this.sourceNoteScrollFrame);
@@ -577,24 +641,40 @@ export class CardForgeView extends ItemView {
 		});
 	}
 
-	private buildQueue(workspace: HTMLElement): void {
+	private buildWorkflow(workspace: HTMLElement): void {
 		const queue = workspace.createEl('section', {
-			cls: 'ttrpg-card-forge__queue',
-			attr: { 'aria-label': 'Print queue' },
+			cls: 'ttrpg-card-forge__queue ttrpg-card-forge__workflow',
+			attr: { 'aria-label': 'Card Forge workflow' },
 		});
 		const queueHeader = queue.createDiv({ cls: 'ttrpg-card-forge__queue-header' });
 		queueHeader.createEl('h3', {
-			text: 'Print queue',
+			text: 'Workflow',
 			cls: 'ttrpg-card-forge__panel-heading',
 		});
-		this.clearQueueButton = queueHeader.createEl('button', {
+		const modeToggle = queueHeader.createDiv({
+			cls: 'ttrpg-card-forge__workflow-toggle',
+			attr: { role: 'tablist', 'aria-label': 'Workflow mode' },
+		});
+		this.queueModeButton = this.createWorkflowModeButton(modeToggle, 'Print queue', 'queue');
+		this.savedSetsModeButton = this.createWorkflowModeButton(modeToggle, 'Saved sets', 'saved-sets');
+		this.exportsModeButton = this.createWorkflowModeButton(modeToggle, 'Exports', 'exports');
+
+		this.workflowQueueElement = queue.createDiv({ cls: 'ttrpg-card-forge__workflow-queue' });
+		const queueActions = this.workflowQueueElement.createDiv({
+			cls: 'ttrpg-card-forge__queue-actions',
+		});
+		this.savePrintSetButton = queueActions.createEl('button', {
+			text: 'Save print set',
+			attr: { type: 'button' },
+		});
+		this.clearQueueButton = queueActions.createEl('button', {
 			text: 'Clear',
 			attr: { type: 'button', 'aria-label': 'Clear print queue' },
 		});
-		this.queueSummaryElement = queue.createDiv({ cls: 'ttrpg-card-forge__queue-summary' });
-		this.queueListElement = queue.createDiv({ cls: 'ttrpg-card-forge__queue-list' });
+		this.queueSummaryElement = this.workflowQueueElement.createDiv({ cls: 'ttrpg-card-forge__queue-summary' });
+		this.queueListElement = this.workflowQueueElement.createDiv({ cls: 'ttrpg-card-forge__queue-list' });
 
-		const sheetPreview = queue.createDiv({ cls: 'ttrpg-card-forge__sheet-preview' });
+		const sheetPreview = this.workflowQueueElement.createDiv({ cls: 'ttrpg-card-forge__sheet-preview' });
 		const sheetNavigation = sheetPreview.createDiv({ cls: 'ttrpg-card-forge__sheet-navigation' });
 		this.previousSheetButton = sheetNavigation.createEl('button', {
 			text: '‹',
@@ -610,11 +690,11 @@ export class CardForgeView extends ItemView {
 			attr: { 'aria-label': 'A4 landscape sheet preview' },
 		});
 
-		this.queueStatusElement = queue.createDiv({
+		this.queueStatusElement = this.workflowQueueElement.createDiv({
 			cls: 'ttrpg-card-forge__queue-status',
 			attr: { role: 'status', 'aria-live': 'polite' },
 		});
-		const exportActions = queue.createDiv({ cls: 'ttrpg-card-forge__export-actions' });
+		const exportActions = this.workflowQueueElement.createDiv({ cls: 'ttrpg-card-forge__export-actions' });
 		this.exportButton = exportActions.createEl('button', {
 			text: 'Export PDF',
 			cls: 'mod-cta',
@@ -625,6 +705,24 @@ export class CardForgeView extends ItemView {
 			attr: { type: 'button' },
 		});
 		this.openLastPdfButton.hidden = true;
+		this.workflowAuxElement = queue.createDiv({ cls: 'ttrpg-card-forge__workflow-aux' });
+		this.workflowAuxElement.hidden = true;
+		this.updateWorkflowModePresentation();
+	}
+
+	private createWorkflowModeButton(
+		container: HTMLElement,
+		label: string,
+		mode: WorkflowMode,
+	): HTMLButtonElement {
+		return container.createEl('button', {
+			text: label,
+			attr: {
+				type: 'button',
+				role: 'tab',
+				'aria-selected': String(this.workflowMode === mode),
+			},
+		});
 	}
 
 	private render(): void {
@@ -632,6 +730,336 @@ export class CardForgeView extends ItemView {
 		this.renderEditor();
 		this.renderPreview();
 		this.renderQueue();
+	}
+
+	private setWorkflowMode(mode: WorkflowMode): void {
+		this.workflowMode = mode;
+		this.updateWorkflowModePresentation();
+		if (mode === 'saved-sets') {
+			this.renderSavedPrintSets();
+		} else if (mode === 'exports') {
+			void this.renderExportGallery();
+		}
+	}
+
+	private updateWorkflowModePresentation(): void {
+		const buttons = [
+			[this.queueModeButton, 'queue'],
+			[this.savedSetsModeButton, 'saved-sets'],
+			[this.exportsModeButton, 'exports'],
+		] as const;
+		for (const [button, mode] of buttons) {
+			button?.toggleClass('is-active', this.workflowMode === mode);
+			button?.setAttribute('aria-selected', String(this.workflowMode === mode));
+		}
+		if (this.workflowQueueElement) {
+			this.workflowQueueElement.hidden = this.workflowMode !== 'queue';
+		}
+		if (this.workflowAuxElement) {
+			this.workflowAuxElement.hidden = this.workflowMode === 'queue';
+		}
+	}
+
+	private async saveCurrentQueueAsPrintSet(): Promise<void> {
+		const entries = this.printQueue.getEntries();
+		if (entries.length === 0) {
+			new Notice('Add at least one item before saving a print set.');
+			return;
+		}
+		const name = await promptForText(this.app, {
+			title: 'Save print set',
+			label: 'Name',
+			confirmLabel: 'Save',
+		});
+		if (name === null) {
+			return;
+		}
+		let result = this.savedPrintSets.save(name, entries);
+		if (result.status === 'duplicate-name') {
+			const replace = await confirmWorkflowAction(
+				this.app,
+				'Replace saved print set?',
+				`A saved set named “${result.existing.name}” already exists. Replace it with the current queue?`,
+				'Replace',
+			);
+			if (!replace) {
+				return;
+			}
+			result = this.savedPrintSets.save(name, entries, true);
+		}
+		if (result.status === 'invalid-name') {
+			new Notice('Saved print set name cannot be blank.');
+			return;
+		}
+		if (result.status !== 'created' && result.status !== 'replaced') {
+			return;
+		}
+		new Notice(result.containsTemporaryArtwork
+			? `Saved “${result.set.name}”. Temporary artwork may need to be selected again after restart.`
+			: `Saved print set “${result.set.name}”.`);
+	}
+
+	private renderSavedPrintSets(): void {
+		if (!this.workflowAuxElement || this.workflowMode !== 'saved-sets') {
+			return;
+		}
+		this.workflowAuxElement.empty();
+		const sets = this.savedPrintSets.getSets();
+		this.workflowAuxElement.createDiv({
+			cls: 'ttrpg-card-forge__workflow-summary',
+			text: `${sets.length} saved ${sets.length === 1 ? 'set' : 'sets'}`,
+		});
+		if (sets.length === 0) {
+			this.workflowAuxElement.createDiv({
+				cls: 'ttrpg-card-forge__empty',
+				text: 'No saved print sets yet.',
+			});
+			return;
+		}
+		const list = this.workflowAuxElement.createDiv({ cls: 'ttrpg-card-forge__saved-set-list' });
+		for (const set of sets) {
+			this.renderSavedPrintSetRow(list, set);
+		}
+	}
+
+	private renderSavedPrintSetRow(container: HTMLElement, set: SavedPrintSet): void {
+		const row = container.createDiv({ cls: 'ttrpg-card-forge__saved-set' });
+		const details = row.createDiv({ cls: 'ttrpg-card-forge__saved-set-details' });
+		details.createDiv({ cls: 'ttrpg-card-forge__saved-set-name', text: set.name });
+		const copies = set.entries.reduce((sum, entry) => sum + entry.quantity, 0);
+		details.createDiv({
+			cls: 'ttrpg-card-forge__saved-set-meta',
+			text: `${set.entries.length} ${set.entries.length === 1 ? 'entry' : 'entries'} · ${copies} ${copies === 1 ? 'copy' : 'copies'} · ${formatWorkflowDate(set.updatedAt)}`,
+		});
+		const actions = row.createDiv({ cls: 'ttrpg-card-forge__saved-set-actions' });
+		appendQueueButton(actions, 'Load', `Load saved print set ${set.name}`, () => {
+			void this.loadSavedPrintSet(set.id);
+		});
+		appendQueueButton(actions, 'Rename', `Rename saved print set ${set.name}`, () => {
+			void this.renameSavedPrintSet(set.id);
+		});
+		appendQueueButton(actions, 'Delete', `Delete saved print set ${set.name}`, () => {
+			void this.deleteSavedPrintSet(set.id);
+		});
+	}
+
+	private async loadSavedPrintSet(id: string): Promise<void> {
+		const available = new Set(this.itemIndex.getItems().map((item) => item.filePath));
+		let result = this.savedPrintSets.loadIntoQueue(id, this.printQueue, available);
+		if (result.status === 'requires-confirmation') {
+			const replace = await confirmWorkflowAction(
+				this.app,
+				'Replace current print queue?',
+				`Loading “${result.set.name}” will replace the current print queue.`,
+				'Replace queue',
+			);
+			if (!replace) {
+				return;
+			}
+			result = this.savedPrintSets.loadIntoQueue(id, this.printQueue, available, true);
+		}
+		if (result.status === 'not-found') {
+			new Notice('That saved print set is no longer available.');
+			return;
+		}
+		if (result.status === 'no-resolvable-entries') {
+			new Notice('No saved items could be found. The current print queue was left unchanged.');
+			return;
+		}
+		if (result.status !== 'loaded') {
+			return;
+		}
+		if (this.editingQueueEntryId && !this.printQueue.getEntry(this.editingQueueEntryId)) {
+			this.resetEditorSession();
+			this.renderEditor();
+			if (this.previewMode !== 'source-note') {
+				this.renderPreview();
+			}
+		}
+		const missing = result.missingCount > 0
+			? ` ${result.missingCount} saved ${result.missingCount === 1 ? 'item was' : 'items were'} not found.`
+			: '';
+		const temporary = result.containsTemporaryArtwork
+			? ' Temporary artwork may need to be selected again.'
+			: '';
+		new Notice(`Loaded ${result.entries.length} ${result.entries.length === 1 ? 'entry' : 'entries'} (${result.totalCopies} ${result.totalCopies === 1 ? 'copy' : 'copies'}).${missing}${temporary}`);
+	}
+
+	private async renameSavedPrintSet(id: string): Promise<void> {
+		const set = this.savedPrintSets.getSet(id);
+		if (!set) {
+			return;
+		}
+		const name = await promptForText(this.app, {
+			title: 'Rename saved print set',
+			label: 'Name',
+			initialValue: set.name,
+			confirmLabel: 'Rename',
+		});
+		if (name === null) {
+			return;
+		}
+		const result = this.savedPrintSets.rename(id, name);
+		if (result.status === 'invalid-name') {
+			new Notice('Saved print set name cannot be blank.');
+		} else if (result.status === 'duplicate-name') {
+			new Notice(`A saved print set named “${result.existing.name}” already exists.`);
+		} else if (result.status === 'renamed') {
+			new Notice(`Renamed saved print set to “${result.set.name}”.`);
+		}
+	}
+
+	private async deleteSavedPrintSet(id: string): Promise<void> {
+		const set = this.savedPrintSets.getSet(id);
+		if (!set) {
+			return;
+		}
+		const confirmed = await confirmWorkflowAction(
+			this.app,
+			'Delete saved print set?',
+			`Delete “${set.name}”? The current queue, source notes, artwork, and PDFs will not be changed.`,
+			'Delete',
+		);
+		if (confirmed && this.savedPrintSets.delete(id)) {
+			new Notice(`Deleted saved print set “${set.name}”.`);
+		}
+	}
+
+	async onPdfExportFolderChanged(): Promise<void> {
+		if (this.workflowMode === 'exports') {
+			await this.renderExportGallery();
+		}
+	}
+
+	private async renderExportGallery(): Promise<void> {
+		if (!this.workflowAuxElement || this.workflowMode !== 'exports') {
+			return;
+		}
+		const generation = ++this.exportGalleryGeneration;
+		const exportFolder = normalizeExportFolder(this.getSettings().pdfExportFolder);
+		let state: ReturnType<typeof buildExportGalleryState>;
+		try {
+			const folder = this.app.vault.getAbstractFileByPath(exportFolder);
+			state = !folder
+				? buildExportGalleryState({ status: 'missing' })
+				: folder instanceof TFolder
+					? buildExportGalleryState({
+						status: 'ready',
+						files: folder.children
+							.filter((file): file is TFile => file instanceof TFile)
+							.map((file) => ({
+								path: file.path,
+								name: file.name,
+								modifiedTime: file.stat.mtime,
+								size: file.stat.size,
+							})),
+					})
+					: buildExportGalleryState({ status: 'unreadable' });
+		} catch (error) {
+			console.warn('TTRPG Card Forge: export folder could not be read', error);
+			state = buildExportGalleryState({ status: 'unreadable' });
+		}
+		if (
+			generation !== this.exportGalleryGeneration
+			|| !this.workflowAuxElement
+			|| this.workflowMode !== 'exports'
+		) {
+			return;
+		}
+		this.workflowAuxElement.empty();
+		this.workflowAuxElement.createDiv({
+			cls: 'ttrpg-card-forge__workflow-summary',
+			text: `${state.entries.length} Card Forge ${state.entries.length === 1 ? 'export' : 'exports'}`,
+		});
+		if (state.status === 'unreadable') {
+			this.workflowAuxElement.createDiv({
+				cls: 'ttrpg-card-forge__empty is-warning',
+				text: 'Export folder could not be read.',
+			});
+			return;
+		}
+		if (state.entries.length === 0) {
+			this.workflowAuxElement.createDiv({
+				cls: 'ttrpg-card-forge__empty',
+				text: 'No Card Forge exports yet.',
+			});
+			return;
+		}
+		const list = this.workflowAuxElement.createDiv({ cls: 'ttrpg-card-forge__export-list' });
+		for (const entry of state.entries) {
+			this.renderExportGalleryRow(list, entry);
+		}
+	}
+
+	private renderExportGalleryRow(
+		container: HTMLElement,
+		entry: ExportGalleryFileInfo,
+	): void {
+		const row = container.createDiv({ cls: 'ttrpg-card-forge__export-entry' });
+		const details = row.createDiv({ cls: 'ttrpg-card-forge__export-entry-details' });
+		details.createDiv({ cls: 'ttrpg-card-forge__export-entry-name', text: entry.name });
+		details.createDiv({
+			cls: 'ttrpg-card-forge__export-entry-meta',
+			text: `${formatWorkflowDate(entry.modifiedTime)} · ${formatFileSize(entry.size)}`,
+		});
+		const actions = row.createDiv({ cls: 'ttrpg-card-forge__export-entry-actions' });
+		appendQueueButton(actions, 'Open', `Open ${entry.name}`, () => {
+			void this.openGalleryEntry(entry);
+		});
+		appendQueueButton(actions, 'Delete', `Delete ${entry.name}`, () => {
+			void this.deleteGalleryEntry(entry);
+		});
+	}
+
+	private async openGalleryEntry(entry: ExportGalleryFileInfo): Promise<void> {
+		try {
+			const opened = await openGalleryExport(entry, async (path) => {
+				const file = this.app.vault.getAbstractFileByPath(path);
+				if (!(file instanceof TFile) || file.name !== entry.name) {
+					throw new Error('Export file is no longer available.');
+				}
+				await this.openPdf(file);
+			});
+			if (!opened) {
+				new Notice('That file is not a recognized Card Forge export.');
+			}
+		} catch (error) {
+			console.warn('TTRPG Card Forge: export could not be opened', error);
+			new Notice('Card Forge could not open that export.');
+		}
+	}
+
+	private async deleteGalleryEntry(entry: ExportGalleryFileInfo): Promise<void> {
+		const selected = this.app.vault.getAbstractFileByPath(entry.path);
+		if (!(selected instanceof TFile) || selected.name !== entry.name) {
+			new Notice('That export is no longer available.');
+			await this.renderExportGallery();
+			return;
+		}
+		try {
+			const confirmed = await this.app.fileManager.promptForDeletion(selected);
+			await deleteGalleryExport(entry, confirmed, async (path) => {
+				const file = this.app.vault.getAbstractFileByPath(path);
+				if (!(file instanceof TFile) || file.name !== entry.name) {
+					throw new Error('Export file is no longer available.');
+				}
+				await this.app.fileManager.trashFile(file);
+			});
+		} catch (error) {
+			console.warn('TTRPG Card Forge: export could not be deleted', error);
+			new Notice('Card Forge could not delete that export.');
+		}
+		await this.renderExportGallery();
+	}
+
+	private refreshExportsForVaultChange(path: string, oldPath?: string): void {
+		if (this.workflowMode !== 'exports') {
+			return;
+		}
+		const folder = normalizeExportFolder(this.getSettings().pdfExportFolder);
+		if (isDirectChildPath(path, folder) || (oldPath && isDirectChildPath(oldPath, folder))) {
+			void this.renderExportGallery();
+		}
 	}
 
 	private renderBrowser(): boolean {
@@ -2211,6 +2639,11 @@ export class CardForgeView extends ItemView {
 		appendQueueButton(controls, '+', `Increase ${resolved.item?.name ?? 'item'} quantity`, () => this.printQueue.increment(resolved.entry.id));
 		appendQueueButton(controls, '↑', `Move ${resolved.item?.name ?? 'item'} up`, () => this.printQueue.move(resolved.entry.id, -1), index === 0);
 		appendQueueButton(controls, '↓', `Move ${resolved.item?.name ?? 'item'} down`, () => this.printQueue.move(resolved.entry.id, 1), index === this.currentQueuePlan.length - 1);
+		appendQueueButton(controls, 'Duplicate', `Duplicate ${resolved.item?.name ?? 'item'} queue entry`, () => {
+			if (!this.printQueue.duplicate(resolved.entry.id)) {
+				new Notice('Card Forge could not safely duplicate that queue entry.');
+			}
+		});
 		appendQueueButton(controls, 'Edit', `Edit ${resolved.item?.name ?? 'item'} print card`, () => this.editQueueEntry(resolved.entry.id));
 		appendQueueButton(controls, 'Remove', `Remove ${resolved.item?.name ?? 'item'} from queue`, () => this.printQueue.remove(resolved.entry.id));
 	}
@@ -2251,6 +2684,9 @@ export class CardForgeView extends ItemView {
 		const physicalCount = flattenPrintQueue(this.currentQueuePlan).length;
 		this.exportButton.disabled = this.exportInProgress || physicalCount === 0 || invalid.length > 0;
 		this.clearQueueButton.disabled = this.exportInProgress || this.printQueue.getEntries().length === 0;
+		if (this.savePrintSetButton) {
+			this.savePrintSetButton.disabled = this.exportInProgress || this.printQueue.getEntries().length === 0;
+		}
 		this.openLastPdfButton.hidden = !this.lastPdfFile;
 		this.openLastPdfButton.disabled = this.exportInProgress || !this.lastPdfFile;
 	}
@@ -2282,6 +2718,9 @@ export class CardForgeView extends ItemView {
 				`Saved ${result.fileName} · ${result.physicalCardCount} physical cards · ${result.a4PageCount} A4 pages`,
 			);
 			new Notice(`Saved ${result.fileName}: ${result.physicalCardCount} physical cards on ${result.a4PageCount} A4 pages.`);
+			if (this.workflowMode === 'exports') {
+				await this.renderExportGallery();
+			}
 			if (settings.openPdfAfterExport) {
 				await this.openPdf(result.file);
 			}
@@ -2411,6 +2850,22 @@ export class CardForgeView extends ItemView {
 
 	private findSelectedItem(): ItemCardData | undefined {
 		return this.itemIndex.getItems().find((item) => item.filePath === this.selectedFilePath);
+	}
+
+	selectItemForPreview(filePath: string): boolean {
+		const item = this.itemIndex.getItems().find((candidate) => candidate.filePath === filePath);
+		if (!item) {
+			return false;
+		}
+		this.rememberSourceNoteScroll();
+		this.selectedFilePath = item.filePath;
+		this.resetEditorSession();
+		this.previewMode = 'preview';
+		this.currentPageIndex = 0;
+		this.renderBrowser();
+		this.renderEditor();
+		this.renderPreview();
+		return true;
 	}
 
 	private showRelativePage(offset: number): void {
@@ -2544,6 +2999,32 @@ function appendQueueButton(
 	});
 	button.disabled = disabled;
 	button.addEventListener('click', onClick);
+}
+
+function formatWorkflowDate(timestamp: number): string {
+	return new Date(timestamp).toLocaleString(undefined, {
+		dateStyle: 'medium',
+		timeStyle: 'short',
+	});
+}
+
+function formatFileSize(bytes: number): string {
+	if (bytes < 1024) {
+		return `${bytes} B`;
+	}
+	if (bytes < 1024 * 1024) {
+		return `${(bytes / 1024).toFixed(1)} KB`;
+	}
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isDirectChildPath(path: string, folder: string): boolean {
+	const normalizedPath = path.replace(/\\/gu, '/');
+	const normalizedFolder = folder.replace(/\\/gu, '/').replace(/\/+$/gu, '');
+	if (!normalizedFolder || !normalizedPath.startsWith(`${normalizedFolder}/`)) {
+		return false;
+	}
+	return !normalizedPath.slice(normalizedFolder.length + 1).includes('/');
 }
 
 function formatArtworkDiagnostic(

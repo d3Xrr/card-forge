@@ -4,17 +4,17 @@
 
 TTRPG Card Forge is an Obsidian desktop plugin that creates printable item cards from structured Markdown in a user's vault. Phase 1 indexes TTRPG CLI/5etools-style item frontmatter. Phase 2 owns normalized item content, semantic pagination, artwork handling, and card DOM rendering. Phase 3 owns the persistent print queue, deterministic physical-card planning, A4 sheet geometry, and local PDF export.
 
-The plugin ID is permanently `ttrpg-card-forge`. Do not rename it. Phase 4B owns non-destructive print overrides, same-note variant resolution, manual card boundaries, session-only artwork, and optional managed artwork imports.
+The plugin ID is permanently `ttrpg-card-forge`. Do not rename it. Phase 4B owns non-destructive print overrides, same-note variant resolution, manual card boundaries, session-only artwork, and optional managed artwork imports. Phase 4D owns Saved Print Set snapshots, current-item commands, queue duplication, and the lightweight vault Export Gallery.
 
 ## Architecture
 
-- `src/main.ts`: plugin lifecycle, commands, view registration, settings, and persisted queue state.
-- `src/models/`: normalized items, semantic card pages, print-queue entries, and the canonical physical profile.
+- `src/main.ts`: plugin lifecycle, commands, view registration, settings, and persisted queue and Saved Print Set state.
+- `src/models/`: normalized items, semantic card pages, print-queue entries, Saved Print Sets, and the canonical physical profile.
 - `src/parsers/`: pure parsing and normalization, independent of UI and export.
 - `src/renderer/`: semantic pagination, fixed physical fit measurement, safe Markdown DOM, and reusable card rendering.
-- `src/services/`: Obsidian integration and queue resolution/flattening. `item-index.ts` owns discovery; `artwork-resolver.ts` resolves local images.
+- `src/services/`: Obsidian integration, workflow helpers, and queue resolution/flattening. `item-index.ts` owns discovery; `artwork-resolver.ts` resolves local images; `export-gallery.ts` filters vault metadata only.
 - `src/export/`: fixed A4 geometry, DOM-to-PNG rasterization, PDF assembly, and Vault API storage.
-- `src/views/`: native Obsidian browser, scaled canonical preview, print queue, sheet preview, and export UX.
+- `src/views/`: native Obsidian browser, scaled canonical preview, Queue/Saved Sets/Exports workflow panel, sheet preview, and export UX.
 - `src/settings.ts`: persisted plugin settings and settings UI.
 - `tests/`: pure parser, renderer-helper, queue, geometry, and PDF-structure tests.
 - `scripts/deploy.mjs`: local filesystem access used only to copy release artifacts into a development vault.

@@ -2,7 +2,7 @@
 
 TTRPG Card Forge is a desktop Obsidian plugin for turning structured item notes already stored in a user's vault into printable TTRPG cards. It indexes TTRPG CLI/5etools-style item Markdown, renders deterministic physical cards, and exports print-ready A4 PDF sheets without uploading vault content.
 
-Phase 4B adds non-destructive, print-only live editing on top of the deterministic physical planner and local PDF export. Spells, feats, monsters, and other card types are not implemented yet.
+Phase 4D connects non-destructive live editing, batch queue building, reusable Saved Print Sets, and a lightweight Export Gallery around the deterministic physical planner and local PDF export. Spells, feats, monsters, and other card types are not implemented yet.
 
 ## Current features
 
@@ -12,14 +12,16 @@ Phase 4B adds non-destructive, print-only live editing on top of the determinist
 - Plans semantic primary, continuation, and Crafting cards without clipping content.
 - Uses one canonical physical profile for planning and export: 63.5 × 88.9 mm (2.5 × 3.5 inches), 750 × 1050 px at 300 DPI.
 - Scales the already-planned physical card for the visible preview, so pane width no longer determines its page count.
-- Provides a searchable item browser, source-note action, page navigation, and fit diagnostics.
+- Provides a searchable, filterable, multi-select item browser, read-only Source Note mode, page navigation, and fit diagnostics.
 - Provides responsive **Preview** and **Edit** modes with debounced canonical replanning while the last completed preview stays visible.
 - Supports print-only overrides for title, type, rarity, attunement, rules Markdown, structured statistics, artwork, source text, and same-note variants.
 - Recognizes `///CARD BREAK///` on its own line as an explicit new physical-card boundary; the delimiter is never rendered.
 - Uses local files or explicitly requested HTTPS artwork as session-only ObjectURLs by default, while also supporting source art, no art, and existing vault-relative art. **Save to vault** opts into a collision-safe file under `Card Forge Assets`.
 - Adds selected items to a persistent print queue only when the user requests it.
 - Persists each queue entry's overrides and exposes them again through its **Edit** action after reload.
-- Supports quantity changes, removal, clearing, and accessible move-up/move-down ordering.
+- Supports quantity changes, removal, clearing, accessible move-up/move-down ordering, and independent queue-entry duplication.
+- Saves named queue snapshots as persistent Saved Print Sets that can later replace the active queue with fresh live entry IDs.
+- Adds command-palette actions to preview or queue the currently active indexed item note.
 - Keeps continuation pages together in copy order. A two-card item at quantity three becomes `1,2,1,2,1,2`.
 - Shows unique item types, total copies, physical cards, and required A4 pages.
 - Shows a simple fixed-slot A4 sheet preview with page navigation.
@@ -27,6 +29,7 @@ Phase 4B adds non-destructive, print-only live editing on top of the determinist
 - Draws optional thin crop marks outside card content; crop marks are enabled by default and no bleed is added.
 - Saves PDFs to the vault-relative `Card Forge Exports` folder by default and creates collision-safe filenames such as `card-forge-2026-08-13-1305-2.pdf`.
 - Can open the last generated PDF in Obsidian, with optional automatic opening after export.
+- Lists recognized Card Forge PDFs from the configured export folder in an Export Gallery with Obsidian-native Open and recoverable Delete actions.
 
 ## Print workflow
 
@@ -34,10 +37,10 @@ Phase 4B adds non-destructive, print-only live editing on top of the determinist
 2. Select an item and inspect its canonical physical-card pages.
 3. Optionally switch to **Edit** and make a live print draft. Use **Reset edits** or **Add to print queue**; there is no separate Apply step for a new draft.
 4. Adding the same source with equivalent overrides increments its quantity; a different override state creates a distinct entry.
-5. Use **Edit**, `+`, `−`, move-up, move-down, and remove controls to prepare the queue. Existing queue edits use **Save changes**, **Discard changes**, and **Reset to source**; reset remains a working draft until saved.
-6. Inspect the physical-card count and A4 sheet preview.
-7. Choose **Export PDF**.
-8. Open the generated PDF with **Open last PDF**.
+5. Use **Edit**, **Duplicate**, `+`, `−`, move-up, move-down, and remove controls to prepare the queue. Existing queue edits use **Save changes**, **Discard changes**, and **Reset to source**; reset remains a working draft until saved.
+6. Optionally choose **Save print set** to keep an independent queue template for another session.
+7. Inspect the physical-card count and A4 sheet preview, then choose **Export PDF**.
+8. Open the generated PDF with **Open last PDF**, or use **Exports** to find earlier Card Forge PDFs in the configured folder.
 
 A queue entry represents copies of an item, not a single rendered page. Every copy is fully emitted before the next copy begins, so continuation and Crafting cards remain adjacent to their primary card.
 
@@ -63,7 +66,7 @@ Card DOM is rasterized locally to a lossless 750 × 1050 PNG, then embedded with
 
 ## Backlog
 
-Deferred, non-release-blocking ideas are documented in [BACKLOG.md](BACKLOG.md). They are planning notes only and are not part of Phase 4B / 0.4.0.
+Deferred, non-release-blocking ideas are documented in [BACKLOG.md](BACKLOG.md). They are planning notes only and are not part of Phase 4D / 0.6.0.
 
 ## Development
 
@@ -112,18 +115,18 @@ Release tags must exactly match `manifest.json` without a `v` prefix. The GitHub
 
 ## Data and privacy
 
-TTRPG Card Forge is local-first. It does not include D&D rules text or artwork, call game-data APIs, upload vault content, add telemetry, or download game data. Source Markdown and source artwork are read-only. Print overrides live in plugin data. Temporary image bytes are never stored as Base64 in plugin data, and their ObjectURLs are revoked when no draft or queue entry uses them. Vault writes are limited to PDFs explicitly requested by the user and artwork the user explicitly chooses to persist. Web artwork is fetched only from a user-supplied HTTPS URL, downloaded once, and then rendered locally without a continuing remote dependency.
+TTRPG Card Forge is local-first. It does not include D&D rules text or artwork, call game-data APIs, upload vault content, add telemetry, or download game data. Source Markdown and source artwork are read-only. Print overrides and Saved Print Set snapshots live in plugin data. Temporary image bytes are never stored as Base64 in plugin data, and their ObjectURLs are revoked when no draft, queue entry, or saved set uses them during the current session. Vault writes are limited to PDFs explicitly requested by the user and artwork the user explicitly chooses to persist. Web artwork is fetched only from a user-supplied HTTPS URL, downloaded once, and then rendered locally without a continuing remote dependency.
 
 ## Project layout
 
 ```text
 src/
-├── main.ts                    Plugin lifecycle, persisted settings, and queue state
-├── models/                    Item, physical-card profile, page, and print-queue contracts
+├── main.ts                    Plugin lifecycle, commands, settings, queue, and saved-set state
+├── models/                    Item, physical-card profile, page, queue, and saved-set contracts
 ├── parsers/                   Pure frontmatter/body parsing and normalization
 ├── renderer/                  Semantic pagination, physical fitting, and card DOM rendering
-├── services/                  Vault indexing, artwork resolution, and queue planning
+├── services/                  Vault indexing, artwork, workflow, and queue planning
 ├── export/                    Rasterization, A4 geometry, PDF assembly, and vault storage
-├── views/card-forge-view.ts   Browser, canonical preview, queue, sheet preview, and export UX
+├── views/card-forge-view.ts   Browser, canonical preview, workflow panel, and export UX
 └── settings.ts                Persisted settings and settings UI
 ```
