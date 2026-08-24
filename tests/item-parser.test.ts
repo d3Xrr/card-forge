@@ -8,6 +8,7 @@ import {
 	parseLinkedList,
 } from '../src/parsers/item-parser';
 import {
+	normalizeObsidianCallouts,
 	parseItemDescription,
 	stripMarkdownLinks,
 } from '../src/parsers/item-description-parser';
@@ -214,4 +215,35 @@ void test('converts Markdown and wiki links to visible text without exposing des
 		),
 		'Use Bonus Action with Reaction.',
 	);
+});
+
+void test('normalizes simple, titled, and multiline Obsidian callouts for card rules', () => {
+	assert.equal(
+		normalizeObsidianCallouts('> [!note]\n> Readable note text.'),
+		'Readable note text.',
+	);
+	assert.equal(
+		normalizeObsidianCallouts('> [!warning] Special Rule\n> Something happens.'),
+		'**Special Rule.**\nSomething happens.',
+	);
+	assert.equal(
+		normalizeObsidianCallouts('> [!note]\n> line one\n> line two'),
+		'line one\nline two',
+	);
+});
+
+void test('normalizes the real Multiweapon inline callout shape without changing source input', () => {
+	const markdown = [
+		'# Multiweapon',
+		'*Weapon*',
+		'',
+		'A rule chooses its damage type > [!note]',
+		'> (bludgeoning, piercing, or slashing) can be changed as a bonus action.',
+	].join('\n');
+	const before = markdown;
+	const parsed = parseItemDescription(markdown, 'Weapon').description;
+	assert.equal(markdown, before);
+	assert.doesNotMatch(parsed, /\[!note\]|^\s*>/gmu);
+	assert.match(parsed, /A rule chooses its damage type/u);
+	assert.match(parsed, /bludgeoning, piercing, or slashing/u);
 });

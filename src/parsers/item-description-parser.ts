@@ -42,15 +42,53 @@ export function parseItemDescription(
 	const sourceResult = stripSourceFooter(lines);
 	lines = sourceResult.lines;
 
-	const description = collapseEmptyLines(lines)
+	const cardMarkdown = collapseEmptyLines(lines)
 		.map((line) => stripMarkdownLinks(line).trimEnd())
-		.join('\n')
-		.trim();
+		.join('\n');
+	const description = normalizeObsidianCallouts(cardMarkdown).trim();
 
 	return {
 		description,
 		...(sourceResult.sourceText ? { sourceText: sourceResult.sourceText } : {}),
 	};
+}
+
+/**
+ * Converts basic Obsidian callout quotes into ordinary card-safe Markdown.
+ * Source Note rendering bypasses this parser and therefore keeps the vault
+ * Markdown unchanged.
+ */
+export function normalizeObsidianCallouts(markdown: string): string {
+	const output: string[] = [];
+	let inCallout = false;
+	for (const line of markdown.replaceAll('\r\n', '\n').split('\n')) {
+		const marker = line.match(
+			/^(.*?)>\s*\[![^\]]+\][+-]?\s*(.*?)\s*$/u,
+		);
+		if (marker) {
+			const prefix = marker[1]?.trimEnd();
+			const title = marker[2]?.trim();
+			if (prefix?.trim()) {
+				output.push(prefix);
+			}
+			if (title) {
+				const punctuation = /[.!?…]$/u.test(title) ? '' : '.';
+				output.push(`**${title}${punctuation}**`);
+			}
+			inCallout = true;
+			continue;
+		}
+		if (inCallout) {
+			const quoted = line.match(/^\s*>\s?(.*)$/u);
+			if (quoted) {
+				output.push(quoted[1] ?? '');
+				continue;
+			}
+			inCallout = false;
+		}
+		output.push(line);
+	}
+	return output.join('\n');
 }
 
 export function stripMarkdownLinks(markdown: string): string {
