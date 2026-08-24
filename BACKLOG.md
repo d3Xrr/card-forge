@@ -19,6 +19,10 @@ This file tracks completed workflow milestones and intentionally deferred work.
 - **Open current item in Card Forge** and **Add current item to print queue** command-palette workflows.
 - Queue-entry **Duplicate** convenience with fresh IDs and independent print overrides.
 - Compact right-side **Print queue | Saved sets | Exports** workflow navigation.
+- True mutually exclusive Workflow views with queue-only A4/PDF controls.
+- Session-local active Saved Set state with canonical dirty detection and contextual **Save | Save as…** actions.
+- Durable Saved Set artwork preparation that persists available temporary artwork into the configured Card Forge Assets folder.
+- Compact accessible Lucide actions for queue-entry Duplicate, Edit, and Remove.
 
 ## Future Phase 4C follow-ups
 

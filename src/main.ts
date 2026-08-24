@@ -28,6 +28,7 @@ import {
 	addCurrentIndexedItemToQueue,
 	resolveCurrentIndexedItem,
 } from './services/current-item-workflow';
+import { SavedPrintSetSession } from './services/saved-print-set-session';
 
 const INDEX_REBUILD_DELAY_MS = 350;
 const QUEUE_ARTWORK_OWNER = 'print-queue';
@@ -43,6 +44,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 	itemIndex!: ItemIndex;
 	printQueue!: PrintQueueService;
 	savedPrintSets!: SavedPrintSetService;
+	readonly savedPrintSetSession = new SavedPrintSetSession();
 	readonly planningPerformance = new PlanningPerformanceMonitor();
 	readonly physicalPlanCache = new PhysicalPlanCache<FittedItemCardPlan>();
 	readonly temporaryArtworkStore = new TemporaryArtworkStore();
@@ -92,6 +94,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 				this.itemIndex,
 				this.printQueue,
 				this.savedPrintSets,
+				this.savedPrintSetSession,
 				() => this.settings,
 				this.physicalPlanCache,
 				this.planningPerformance,

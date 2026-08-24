@@ -3,10 +3,12 @@ import test from 'node:test';
 
 import type { ItemCardData } from '../src/models/item';
 import { PrintQueueService } from '../src/models/print-queue';
+import { SavedPrintSetService } from '../src/models/saved-print-set';
 import {
 	addCurrentIndexedItemToQueue,
 	resolveCurrentIndexedItem,
 } from '../src/services/current-item-workflow';
+import { SavedPrintSetSession } from '../src/services/saved-print-set-session';
 
 const items: ItemCardData[] = [
 	{
@@ -62,4 +64,19 @@ void test('add-current-item uses canonical defaults, emits once, and never accep
 	assert.equal(second.overrides, undefined);
 	assert.equal(queue.getEntries().length, 1);
 	assert.equal(notifications, 2);
+});
+
+void test('add-current-item marks a loaded active Saved Set dirty through queue state', () => {
+	const queue = new PrintQueueService([], () => 'command-id');
+	queue.add('items/existing.md');
+	const sets = new SavedPrintSetService([], () => 'set-id', () => 1);
+	const saved = sets.save('Active', queue.getEntries());
+	assert.equal(saved.status, 'created');
+	if (saved.status !== 'created') {
+		return;
+	}
+	const session = new SavedPrintSetSession();
+	session.activate(saved.set.id, queue.getEntries());
+	addCurrentIndexedItemToQueue(queue, items[0]!);
+	assert.equal(session.getState(sets.getSets(), queue.getEntries()).dirty, true);
 });

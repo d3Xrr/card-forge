@@ -2,6 +2,7 @@ import {
 	ItemView,
 	MarkdownRenderer,
 	Notice,
+	setIcon,
 	TFile,
 	TFolder,
 	WorkspaceLeaf,
@@ -11,11 +12,16 @@ import { PdfExportService, type PdfExportProgress } from '../export/pdf-export-s
 import { A4_CARDS_PER_SHEET } from '../export/a4-sheet-geometry';
 import type { ItemCardData } from '../models/item';
 import type { ItemCardPage } from '../models/item-card-page';
-import type { PrintQueueService } from '../models/print-queue';
+import {
+	createPrintQueueEntrySnapshot,
+	type PrintQueueEntrySnapshot,
+	type PrintQueueService,
+} from '../models/print-queue';
 import type {
 	SavedPrintSet,
 	SavedPrintSetService,
 } from '../models/saved-print-set';
+import { normalizeSavedPrintSetName } from '../models/saved-print-set';
 import type { CardOverrides } from '../models/card-overrides';
 import {
 	applyCanonicalCardSize,
@@ -136,6 +142,8 @@ import {
 	type ExportGalleryFileInfo,
 } from '../services/export-gallery';
 import { normalizeExportFolder } from '../export/vault-pdf-storage';
+import { prepareSavedPrintSetEntries } from '../services/saved-print-set-artwork';
+import type { SavedPrintSetSession } from '../services/saved-print-set-session';
 import {
 	confirmWorkflowAction,
 	promptForText,
@@ -207,6 +215,8 @@ export class CardForgeView extends ItemView {
 	private savedSetsModeButton: HTMLButtonElement | null = null;
 	private exportsModeButton: HTMLButtonElement | null = null;
 	private savePrintSetButton: HTMLButtonElement | null = null;
+	private savePrintSetAsButton: HTMLButtonElement | null = null;
+	private activeSavedSetStatusElement: HTMLElement | null = null;
 	private sheetGridElement: HTMLElement | null = null;
 	private sheetLabelElement: HTMLElement | null = null;
 	private previousSheetButton: HTMLButtonElement | null = null;
@@ -259,6 +269,7 @@ export class CardForgeView extends ItemView {
 		private readonly itemIndex: ItemIndex,
 		private readonly printQueue: PrintQueueService,
 		private readonly savedPrintSets: SavedPrintSetService,
+		private readonly savedPrintSetSession: SavedPrintSetSession,
 		private readonly getSettings: () => Readonly<CardForgeSettings>,
 		private readonly physicalPlanCache: PhysicalPlanCache<FittedItemCardPlan>,
 		private readonly planningPerformance: PlanningPerformanceMonitor,
@@ -357,11 +368,18 @@ export class CardForgeView extends ItemView {
 			this.registerDomEvent(this.sourceNoteOpenButton, 'click', () => this.openSelectedItem());
 		}
 		if (this.clearQueueButton) {
-			this.registerDomEvent(this.clearQueueButton, 'click', () => this.printQueue.clear());
+			this.registerDomEvent(this.clearQueueButton, 'click', () => {
+				void this.clearPrintQueue();
+			});
 		}
 		if (this.savePrintSetButton) {
 			this.registerDomEvent(this.savePrintSetButton, 'click', () => {
-				void this.saveCurrentQueueAsPrintSet();
+				void this.saveActivePrintSet();
+			});
+		}
+		if (this.savePrintSetAsButton) {
+			this.registerDomEvent(this.savePrintSetAsButton, 'click', () => {
+				void this.saveCurrentQueueAsNewSet();
 			});
 		}
 		if (this.exportButton) {
@@ -423,8 +441,14 @@ export class CardForgeView extends ItemView {
 		this.unsubscribeFromQueue = this.printQueue.subscribe(() => {
 			this.currentSheetIndex = 0;
 			this.renderQueue();
+			this.updateActiveSavedSetPresentation();
 		});
 		this.unsubscribeFromSavedPrintSets = this.savedPrintSets.subscribe(() => {
+			this.savedPrintSetSession.getState(
+				this.savedPrintSets.getSets(),
+				this.printQueue.getEntries(),
+			);
+			this.updateActiveSavedSetPresentation();
 			if (this.workflowMode === 'saved-sets') {
 				this.renderSavedPrintSets();
 			}
@@ -660,11 +684,19 @@ export class CardForgeView extends ItemView {
 		this.exportsModeButton = this.createWorkflowModeButton(modeToggle, 'Exports', 'exports');
 
 		this.workflowQueueElement = queue.createDiv({ cls: 'ttrpg-card-forge__workflow-queue' });
+		this.activeSavedSetStatusElement = this.workflowQueueElement.createDiv({
+			cls: 'ttrpg-card-forge__active-set-status',
+			attr: { role: 'status', 'aria-live': 'polite' },
+		});
 		const queueActions = this.workflowQueueElement.createDiv({
 			cls: 'ttrpg-card-forge__queue-actions',
 		});
 		this.savePrintSetButton = queueActions.createEl('button', {
-			text: 'Save print set',
+			text: 'Save',
+			attr: { type: 'button' },
+		});
+		this.savePrintSetAsButton = queueActions.createEl('button', {
+			text: 'Save as…',
 			attr: { type: 'button' },
 		});
 		this.clearQueueButton = queueActions.createEl('button', {
@@ -730,11 +762,13 @@ export class CardForgeView extends ItemView {
 		this.renderEditor();
 		this.renderPreview();
 		this.renderQueue();
+		this.updateActiveSavedSetPresentation();
 	}
 
 	private setWorkflowMode(mode: WorkflowMode): void {
 		this.workflowMode = mode;
 		this.updateWorkflowModePresentation();
+		this.updateActiveSavedSetPresentation();
 		if (mode === 'saved-sets') {
 			this.renderSavedPrintSets();
 		} else if (mode === 'exports') {
@@ -760,43 +794,136 @@ export class CardForgeView extends ItemView {
 		}
 	}
 
-	private async saveCurrentQueueAsPrintSet(): Promise<void> {
-		const entries = this.printQueue.getEntries();
-		if (entries.length === 0) {
+	private updateActiveSavedSetPresentation(): void {
+		if (!this.activeSavedSetStatusElement || !this.savePrintSetButton) {
+			return;
+		}
+		const state = this.savedPrintSetSession.getState(
+			this.savedPrintSets.getSets(),
+			this.printQueue.getEntries(),
+		);
+		this.activeSavedSetStatusElement.setText(state.activeSet
+			? `${state.activeSet.name}${state.dirty ? ' · Modified' : ''}`
+			: 'Unsaved print queue');
+		this.savePrintSetButton.hidden = !state.activeSet;
+		this.savePrintSetButton.disabled = this.exportInProgress
+			|| this.printQueue.getEntries().length === 0
+			|| !state.dirty;
+	}
+
+	private async saveActivePrintSet(): Promise<void> {
+		const state = this.savedPrintSetSession.getState(
+			this.savedPrintSets.getSets(),
+			this.printQueue.getEntries(),
+		);
+		if (!state.activeSet) {
+			return;
+		}
+		const queueSnapshot = this.snapshotCurrentQueue();
+		const entries = await this.prepareCurrentQueueForSavedSet(queueSnapshot);
+		if (!entries) {
+			return;
+		}
+		const result = this.savedPrintSets.update(state.activeSet.id, entries);
+		if (result.status !== 'updated') {
+			new Notice('That saved print set is no longer available.');
+			return;
+		}
+		this.savedPrintSetSession.activate(result.set.id, queueSnapshot);
+		this.updateActiveSavedSetPresentation();
+		new Notice(`Saved print set “${result.set.name}”.`);
+	}
+
+	private async saveCurrentQueueAsNewSet(): Promise<void> {
+		const currentEntries = this.printQueue.getEntries();
+		if (currentEntries.length === 0) {
 			new Notice('Add at least one item before saving a print set.');
 			return;
 		}
 		const name = await promptForText(this.app, {
-			title: 'Save print set',
+			title: 'Save print set as',
 			label: 'Name',
 			confirmLabel: 'Save',
 		});
 		if (name === null) {
 			return;
 		}
-		let result = this.savedPrintSets.save(name, entries);
-		if (result.status === 'duplicate-name') {
+		const normalizedName = normalizeSavedPrintSetName(name);
+		if (!normalizedName) {
+			new Notice('Saved print set name cannot be blank.');
+			return;
+		}
+		const existing = this.savedPrintSets.getSetByName(normalizedName);
+		if (existing) {
 			const replace = await confirmWorkflowAction(
 				this.app,
 				'Replace saved print set?',
-				`A saved set named “${result.existing.name}” already exists. Replace it with the current queue?`,
+				`A saved set named “${existing.name}” already exists. Replace it with the current queue?`,
 				'Replace',
 			);
 			if (!replace) {
 				return;
 			}
-			result = this.savedPrintSets.save(name, entries, true);
 		}
-		if (result.status === 'invalid-name') {
-			new Notice('Saved print set name cannot be blank.');
+		const queueSnapshot = this.snapshotCurrentQueue();
+		const entries = await this.prepareCurrentQueueForSavedSet(queueSnapshot);
+		if (!entries) {
 			return;
 		}
+		const result = this.savedPrintSets.save(normalizedName, entries, Boolean(existing));
 		if (result.status !== 'created' && result.status !== 'replaced') {
 			return;
 		}
-		new Notice(result.containsTemporaryArtwork
-			? `Saved “${result.set.name}”. Temporary artwork may need to be selected again after restart.`
-			: `Saved print set “${result.set.name}”.`);
+		this.savedPrintSetSession.activate(result.set.id, queueSnapshot);
+		this.updateActiveSavedSetPresentation();
+		new Notice(`Saved print set “${result.set.name}”.`);
+	}
+
+	private snapshotCurrentQueue(): PrintQueueEntrySnapshot[] {
+		return this.printQueue.getEntries().map(createPrintQueueEntrySnapshot);
+	}
+
+	private async prepareCurrentQueueForSavedSet(
+		queueSnapshot: readonly PrintQueueEntrySnapshot[],
+	): Promise<PrintQueueEntrySnapshot[] | undefined> {
+		try {
+			const prepared = await prepareSavedPrintSetEntries(
+				queueSnapshot,
+				this.app.vault,
+				this.temporaryArtworkStore,
+				this.getSettings().cardForgeAssetsFolder,
+			);
+			if (prepared.status === 'missing-artwork') {
+				new Notice('Replace missing artwork before saving this print set.');
+				return undefined;
+			}
+			return prepared.entries;
+		} catch (error) {
+			console.error('TTRPG Card Forge: saved-set artwork persistence failed', error);
+			new Notice('Card Forge could not save this print set because artwork could not be persisted.');
+			return undefined;
+		}
+	}
+
+	private async clearPrintQueue(): Promise<void> {
+		const state = this.savedPrintSetSession.getState(
+			this.savedPrintSets.getSets(),
+			this.printQueue.getEntries(),
+		);
+		if (state.activeSet && state.dirty) {
+			const confirmed = await confirmWorkflowAction(
+				this.app,
+				'Clear modified print queue?',
+				`Clear the modified queue for “${state.activeSet.name}”? The saved set will not be deleted.`,
+				'Clear queue',
+			);
+			if (!confirmed) {
+				return;
+			}
+		}
+		this.savedPrintSetSession.clear();
+		this.printQueue.clear();
+		this.updateActiveSavedSetPresentation();
 	}
 
 	private renderSavedPrintSets(): void {
@@ -825,7 +952,10 @@ export class CardForgeView extends ItemView {
 	private renderSavedPrintSetRow(container: HTMLElement, set: SavedPrintSet): void {
 		const row = container.createDiv({ cls: 'ttrpg-card-forge__saved-set' });
 		const details = row.createDiv({ cls: 'ttrpg-card-forge__saved-set-details' });
-		details.createDiv({ cls: 'ttrpg-card-forge__saved-set-name', text: set.name });
+		const name = details.createDiv({ cls: 'ttrpg-card-forge__saved-set-name', text: set.name });
+		if (this.savedPrintSetSession.activeSavedSetId === set.id) {
+			name.createSpan({ cls: 'ttrpg-card-forge__active-set-badge', text: 'Active' });
+		}
 		const copies = set.entries.reduce((sum, entry) => sum + entry.quantity, 0);
 		details.createDiv({
 			cls: 'ttrpg-card-forge__saved-set-meta',
@@ -869,6 +999,8 @@ export class CardForgeView extends ItemView {
 		if (result.status !== 'loaded') {
 			return;
 		}
+		this.savedPrintSetSession.activate(result.set.id, this.printQueue.getEntries());
+		this.setWorkflowMode('queue');
 		if (this.editingQueueEntryId && !this.printQueue.getEntry(this.editingQueueEntryId)) {
 			this.resetEditorSession();
 			this.renderEditor();
@@ -920,7 +1052,11 @@ export class CardForgeView extends ItemView {
 			`Delete “${set.name}”? The current queue, source notes, artwork, and PDFs will not be changed.`,
 			'Delete',
 		);
+		if (confirmed) {
+			this.savedPrintSetSession.clearIfActive(id);
+		}
 		if (confirmed && this.savedPrintSets.delete(id)) {
+			this.updateActiveSavedSetPresentation();
 			new Notice(`Deleted saved print set “${set.name}”.`);
 		}
 	}
@@ -2639,13 +2775,20 @@ export class CardForgeView extends ItemView {
 		appendQueueButton(controls, '+', `Increase ${resolved.item?.name ?? 'item'} quantity`, () => this.printQueue.increment(resolved.entry.id));
 		appendQueueButton(controls, '↑', `Move ${resolved.item?.name ?? 'item'} up`, () => this.printQueue.move(resolved.entry.id, -1), index === 0);
 		appendQueueButton(controls, '↓', `Move ${resolved.item?.name ?? 'item'} down`, () => this.printQueue.move(resolved.entry.id, 1), index === this.currentQueuePlan.length - 1);
-		appendQueueButton(controls, 'Duplicate', `Duplicate ${resolved.item?.name ?? 'item'} queue entry`, () => {
+		const entryActions = controls.createDiv({ cls: 'ttrpg-card-forge__queue-entry-actions' });
+		appendQueueIconButton(entryActions, 'copy', 'Duplicate card', () => {
 			if (!this.printQueue.duplicate(resolved.entry.id)) {
 				new Notice('Card Forge could not safely duplicate that queue entry.');
 			}
 		});
-		appendQueueButton(controls, 'Edit', `Edit ${resolved.item?.name ?? 'item'} print card`, () => this.editQueueEntry(resolved.entry.id));
-		appendQueueButton(controls, 'Remove', `Remove ${resolved.item?.name ?? 'item'} from queue`, () => this.printQueue.remove(resolved.entry.id));
+		appendQueueIconButton(entryActions, 'pencil', 'Edit card', () => this.editQueueEntry(resolved.entry.id));
+		appendQueueIconButton(
+			entryActions,
+			'trash-2',
+			'Remove card',
+			() => this.printQueue.remove(resolved.entry.id),
+			true,
+		);
 	}
 
 	private renderSheetPreview(): void {
@@ -2683,10 +2826,13 @@ export class CardForgeView extends ItemView {
 		const invalid = getInvalidQueueEntries(this.currentQueuePlan);
 		const physicalCount = flattenPrintQueue(this.currentQueuePlan).length;
 		this.exportButton.disabled = this.exportInProgress || physicalCount === 0 || invalid.length > 0;
-		this.clearQueueButton.disabled = this.exportInProgress || this.printQueue.getEntries().length === 0;
-		if (this.savePrintSetButton) {
-			this.savePrintSetButton.disabled = this.exportInProgress || this.printQueue.getEntries().length === 0;
+		this.clearQueueButton.disabled = this.exportInProgress
+			|| (this.printQueue.getEntries().length === 0
+				&& !this.savedPrintSetSession.activeSavedSetId);
+		if (this.savePrintSetAsButton) {
+			this.savePrintSetAsButton.disabled = this.exportInProgress || this.printQueue.getEntries().length === 0;
 		}
+		this.updateActiveSavedSetPresentation();
 		this.openLastPdfButton.hidden = !this.lastPdfFile;
 		this.openLastPdfButton.disabled = this.exportInProgress || !this.lastPdfFile;
 	}
@@ -2998,6 +3144,28 @@ function appendQueueButton(
 		attr: { type: 'button', 'aria-label': ariaLabel },
 	});
 	button.disabled = disabled;
+	button.addEventListener('click', onClick);
+}
+
+function appendQueueIconButton(
+	container: HTMLElement,
+	icon: string,
+	label: string,
+	onClick: () => void,
+	destructive = false,
+): void {
+	const button = container.createEl('button', {
+		cls: 'ttrpg-card-forge__queue-icon-action',
+		attr: {
+			type: 'button',
+			'aria-label': label,
+			title: label,
+		},
+	});
+	if (destructive) {
+		button.addClass('is-destructive');
+	}
+	setIcon(button, icon);
 	button.addEventListener('click', onClick);
 }
 

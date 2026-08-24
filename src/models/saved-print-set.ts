@@ -24,6 +24,10 @@ export type SavePrintSetResult =
 	| { status: 'duplicate-name'; existing: SavedPrintSet }
 	| { status: 'empty-queue' | 'invalid-name' };
 
+export type UpdatePrintSetResult =
+	| { status: 'updated'; set: SavedPrintSet; containsTemporaryArtwork: boolean }
+	| { status: 'empty-queue' | 'not-found' };
+
 export type RenamePrintSetResult =
 	| { status: 'renamed'; set: SavedPrintSet }
 	| { status: 'duplicate-name'; existing: SavedPrintSet }
@@ -77,7 +81,7 @@ export class SavedPrintSetService {
 
 	save(
 		name: string,
-		queueEntries: readonly PrintQueueEntry[],
+		queueEntries: readonly PrintQueueEntrySnapshot[],
 		replaceExisting = false,
 	): SavePrintSetResult {
 		const normalizedName = normalizeSavedPrintSetName(name);
@@ -87,7 +91,7 @@ export class SavedPrintSetService {
 		if (queueEntries.length === 0) {
 			return { status: 'empty-queue' };
 		}
-		const existing = this.findByName(normalizedName);
+		const existing = this.getSetByName(normalizedName);
 		if (existing && !replaceExisting) {
 			return { status: 'duplicate-name', existing };
 		}
@@ -126,6 +130,29 @@ export class SavedPrintSetService {
 		};
 	}
 
+	update(
+		id: string,
+		queueEntries: readonly PrintQueueEntrySnapshot[],
+	): UpdatePrintSetResult {
+		const set = this.getSet(id);
+		if (!set) {
+			return { status: 'not-found' };
+		}
+		if (queueEntries.length === 0) {
+			return { status: 'empty-queue' };
+		}
+		const entries = queueEntries.map(createPrintQueueEntrySnapshot);
+		set.entries = entries;
+		set.updatedAt = this.now();
+		this.sortSets();
+		this.emit();
+		return {
+			status: 'updated',
+			set,
+			containsTemporaryArtwork: containsTemporaryArtwork(entries),
+		};
+	}
+
 	rename(id: string, name: string): RenamePrintSetResult {
 		const set = this.getSet(id);
 		if (!set) {
@@ -135,7 +162,7 @@ export class SavedPrintSetService {
 		if (!normalizedName) {
 			return { status: 'invalid-name' };
 		}
-		const duplicate = this.findByName(normalizedName);
+		const duplicate = this.getSetByName(normalizedName);
 		if (duplicate && duplicate !== set) {
 			return { status: 'duplicate-name', existing: duplicate };
 		}
@@ -189,7 +216,7 @@ export class SavedPrintSetService {
 		return serializeSavedPrintSets(this.sets);
 	}
 
-	private findByName(name: string): SavedPrintSet | undefined {
+	getSetByName(name: string): SavedPrintSet | undefined {
 		const key = normalizeSavedPrintSetNameKey(name);
 		return this.sets.find((set) => normalizeSavedPrintSetNameKey(set.name) === key);
 	}
@@ -295,7 +322,7 @@ export function containsTemporaryArtwork(
 	return false;
 }
 
-function normalizeSavedPrintSetName(name: string): string {
+export function normalizeSavedPrintSetName(name: string): string {
 	return name.trim().replace(/\s+/gu, ' ');
 }
 

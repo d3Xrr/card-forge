@@ -28,6 +28,8 @@ void test('temporary local and HTTPS selections do not write to the vault by def
 	assert.equal(local.override.kind, 'temporary');
 	assert.equal(https.override.kind, 'temporary');
 	assert.equal(store.size, 2);
+	assert.equal(store.getPayload(local.temporaryAsset!.id)?.fileName, 'local.png');
+	assert.equal(store.getPayload(https.temporaryAsset!.id)?.fileName, 'remote.webp');
 	assert.deepEqual(revoked, []);
 });
 
@@ -66,6 +68,7 @@ void test('owner references revoke replaced, discarded, and removed temporary as
 	assert.ok(store.get(second.id));
 	store.releaseOwner('queue');
 	assert.equal(store.get(second.id), undefined);
+	assert.equal(store.getPayload(second.id), undefined);
 	assert.deepEqual(revoked, [first.resourcePath, second.resourcePath]);
 });
 

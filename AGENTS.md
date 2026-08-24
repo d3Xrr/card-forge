@@ -45,9 +45,21 @@ indexed source ItemCardData (read-only)
 → canonical physical planner and Phase 3 export flow
 ```
 
+The Phase 4D saved-session flow is:
+
+```text
+live PrintQueueEntry[]
+→ canonical ID-free queue fingerprint
+→ session-local active Saved Print Set association
+→ Save / Save As preparation
+→ available temporary artwork persisted once per save into Card Forge Assets
+→ durable SavedPrintSetEntry[] with Vault artwork overrides
+→ existing plugin-data persistence
+```
+
 Overrides belong to queue entries and plugin data, never source Markdown. `///CARD BREAK///` is an editor-only delimiter that becomes an explicit page boundary and must not appear in rendered rules. Variant discovery must remain structural and data-driven; do not add item-name condition trees. Editor code never owns physical pagination or card rendering; it supplies effective data to the canonical planner and renderer.
 
-Editable fields use inheritance by absence: an absent field follows the current source/variant default, while a present field is an explicit print override. Variant changes must preserve explicit fields and refresh inherited fields. Temporary artwork stores only a lightweight runtime identifier in plugin data; Blob/ObjectURL bytes stay in memory, are owner-tracked, and are revoked when no draft or queue entry references them.
+Editable fields use inheritance by absence: an absent field follows the current source/variant default, while a present field is an explicit print override. Variant changes must preserve explicit fields and refresh inherited fields. Temporary artwork stores only a lightweight runtime identifier in plugin data; Blob/ObjectURL bytes stay in memory, are owner-tracked, and are revoked when no draft or queue entry references them. Explicit Saved Set Save/Save As must persist currently available temporary artwork through the managed Vault API and store only the resulting vault-relative override. Missing temporary artwork blocks a new Saved Set save.
 
 PDF code must never own or reproduce item-content pagination. It consumes completed `ItemCardPage[]` from the canonical physical planner. The existing card renderer remains the visual source of truth; do not redraw card content with PDF primitives.
 

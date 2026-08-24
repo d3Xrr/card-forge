@@ -21,6 +21,7 @@ const DEFAULT_URL_FACTORY: TemporaryArtworkUrlFactory = {
 /** Plugin-lifetime owner-tracked object URLs for session-only artwork. */
 export class TemporaryArtworkStore {
 	private readonly assets = new Map<string, TemporaryArtworkAsset>();
+	private readonly payloads = new Map<string, ArtworkImportPayload>();
 	private readonly referencesByOwner = new Map<string, Set<string>>();
 
 	constructor(
@@ -51,11 +52,16 @@ export class TemporaryArtworkStore {
 			}),
 		};
 		this.assets.set(id, asset);
+		this.payloads.set(id, payload);
 		return asset;
 	}
 
 	get(id: string): TemporaryArtworkAsset | undefined {
 		return this.assets.get(id);
+	}
+
+	getPayload(id: string): ArtworkImportPayload | undefined {
+		return this.payloads.get(id);
 	}
 
 	setOwnerReferences(owner: string, ids: Iterable<string>): void {
@@ -74,6 +80,7 @@ export class TemporaryArtworkStore {
 			return;
 		}
 		this.assets.delete(id);
+		this.payloads.delete(id);
 		this.urlFactory.revoke(asset.resourcePath);
 	}
 
@@ -82,6 +89,7 @@ export class TemporaryArtworkStore {
 			this.urlFactory.revoke(asset.resourcePath);
 		}
 		this.assets.clear();
+		this.payloads.clear();
 		this.referencesByOwner.clear();
 	}
 

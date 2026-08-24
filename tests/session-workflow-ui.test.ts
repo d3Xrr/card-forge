@@ -6,6 +6,7 @@ const main = readFileSync('src/main.ts', 'utf8');
 const view = readFileSync('src/views/card-forge-view.ts', 'utf8');
 const exportGallery = readFileSync('src/services/export-gallery.ts', 'utf8');
 const currentItemWorkflow = readFileSync('src/services/current-item-workflow.ts', 'utf8');
+const css = readFileSync('styles.css', 'utf8');
 
 function methodBody(source: string, startMarker: string, endMarker: string): string {
 	const start = source.indexOf(startMarker);
@@ -65,13 +66,82 @@ void test('Workflow modes are right-panel-only and switching performs no plannin
 	assert.match(view, /'Print queue', 'queue'/u);
 	assert.match(view, /'Saved sets', 'saved-sets'/u);
 	assert.match(view, /'Exports', 'exports'/u);
-	assert.match(view, /text: 'Save print set'/u);
-	assert.match(view, /appendQueueButton\(controls, 'Duplicate'/u);
+	assert.match(view, /text: 'Save'/u);
+	assert.match(view, /text: 'Save as…'/u);
+	assert.match(view, /appendQueueIconButton\(entryActions, 'copy', 'Duplicate card'/u);
 	assert.doesNotMatch(
 		switching,
 		/renderQueue|renderPreview|renderEditor|rebuildItemIndex|renderSheetPreview|plan|raster|exportPdf/u,
 	);
 	assert.doesNotMatch(switching, /printQueue\.(?:add|clear|remove|replace|update|increment|decrement|move)/u);
+});
+
+void test('Workflow bodies are truly mutually exclusive and queue-only controls stay together', () => {
+	assert.match(
+		css,
+		/\.ttrpg-card-forge__workflow-queue\[hidden\],[\s\S]*\.ttrpg-card-forge__workflow-aux\[hidden\][\s\S]*display: none/u,
+	);
+	const build = methodBody(view, 'private buildWorkflow', 'private createWorkflowModeButton');
+	assert.match(build, /workflowQueueElement[\s\S]*activeSavedSetStatusElement/u);
+	assert.match(build, /workflowQueueElement[\s\S]*queueListElement/u);
+	assert.match(build, /workflowQueueElement[\s\S]*sheet-preview/u);
+	assert.match(build, /workflowQueueElement[\s\S]*export-actions/u);
+	assert.match(build, /workflowAuxElement/u);
+	assert.match(view, /workflowQueueElement\.hidden = this\.workflowMode !== 'queue'/u);
+	assert.match(view, /workflowAuxElement\.hidden = this\.workflowMode === 'queue'/u);
+});
+
+void test('successful Saved Set load activates it and returns directly to Print Queue', () => {
+	const load = methodBody(
+		view,
+		'private async loadSavedPrintSet',
+		'private async renameSavedPrintSet',
+	);
+	assert.match(load, /result\.status !== 'loaded'/u);
+	assert.match(load, /savedPrintSetSession\.activate\(result\.set\.id, this\.printQueue\.getEntries\(\)\)/u);
+	assert.match(load, /setWorkflowMode\('queue'\)/u);
+	const failedLoad = load.slice(0, load.indexOf("if (result.status !== 'loaded')"));
+	assert.doesNotMatch(failedLoad, /setWorkflowMode\('queue'\)/u);
+});
+
+void test('active-set actions expose Save, Save As, status, Clear, and session-local state', () => {
+	assert.match(main, /readonly savedPrintSetSession = new SavedPrintSetSession\(\)/u);
+	assert.doesNotMatch(main, /activeSavedSetId:[\s\S]*saveData/u);
+	assert.match(view, /'Unsaved print queue'/u);
+	assert.match(view, /\$\{state\.activeSet\.name\}\$\{state\.dirty \? ' · Modified' : ''\}/u);
+	assert.match(view, /private async saveActivePrintSet/u);
+	assert.match(view, /savedPrintSets\.update\(state\.activeSet\.id, entries\)/u);
+	assert.match(view, /private async saveCurrentQueueAsNewSet/u);
+	assert.match(view, /savedPrintSetSession\.activate\(result\.set\.id, queueSnapshot\)/u);
+	assert.match(view, /savedPrintSetSession\.clear\(\)[\s\S]*printQueue\.clear\(\)/u);
+	assert.match(view, /printQueue\.getEntries\(\)\.length === 0[\s\S]*!this\.savedPrintSetSession\.activeSavedSetId/u);
+	assert.match(view, /active-set-badge[\s\S]*text: 'Active'/u);
+});
+
+void test('Saved Set artwork is prepared before logical mutation and live queue artwork stays unchanged', () => {
+	const save = methodBody(view, 'private async saveActivePrintSet', 'private async saveCurrentQueueAsNewSet');
+	const saveAs = methodBody(view, 'private async saveCurrentQueueAsNewSet', 'private snapshotCurrentQueue');
+	assert.ok(save.indexOf('prepareCurrentQueueForSavedSet') < save.indexOf('savedPrintSets.update'));
+	assert.ok(saveAs.indexOf('prepareCurrentQueueForSavedSet') < saveAs.indexOf('savedPrintSets.save'));
+	assert.doesNotMatch(`${save}\n${saveAs}`, /printQueue\.updateOverrides|replaceWithSnapshots/u);
+	assert.match(view, /Replace missing artwork before saving this print set\./u);
+	assert.match(view, /cardForgeAssetsFolder/u);
+});
+
+void test('queue Duplicate, Edit, and Remove are compact accessible Lucide icon buttons', () => {
+	const helper = methodBody(view, 'function appendQueueIconButton', 'function formatArtworkDiagnostic');
+	assert.match(view, /appendQueueIconButton\(entryActions, 'copy', 'Duplicate card'/u);
+	assert.match(view, /appendQueueIconButton\(entryActions, 'copy', 'Duplicate card'[\s\S]*printQueue\.duplicate/u);
+	assert.match(view, /appendQueueIconButton\(entryActions, 'pencil', 'Edit card'[\s\S]*editQueueEntry/u);
+	assert.match(view, /'trash-2',[\s\S]*'Remove card'[\s\S]*printQueue\.remove/u);
+	assert.match(helper, /type: 'button'/u);
+	assert.match(helper, /'aria-label': label/u);
+	assert.match(helper, /title: label/u);
+	assert.match(helper, /setIcon\(button, icon\)/u);
+	assert.doesNotMatch(helper, /text:/u);
+	assert.match(css, /\.ttrpg-card-forge__queue-entry-actions/u);
+	assert.match(css, /\.ttrpg-card-forge__queue-controls \.ttrpg-card-forge__queue-icon-action/u);
+	assert.doesNotMatch(css, /^(?:button|\.mod-root button)\s*\{/mu);
 });
 
 void test('Saved Sets browsing is data-only and Export Gallery is metadata-only', () => {

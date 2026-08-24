@@ -111,6 +111,33 @@ void test('rename preserves identity, enforces unique names, sorts by recency, a
 	assert.deepEqual(queue.getEntries(), queueBeforeDelete);
 });
 
+void test('Save updates one set in place without changing its identity or name', () => {
+	const queue = createQueue();
+	queue.add('items/one.md');
+	const sets = createSets([100, 200]);
+	const created = sets.save('Active Set', queue.getEntries());
+	assert.equal(created.status, 'created');
+	if (created.status !== 'created') {
+		return;
+	}
+	queue.add('items/two.md', { title: 'Edited' });
+	const updated = sets.update(created.set.id, queue.getEntries());
+	assert.equal(updated.status, 'updated');
+	if (updated.status !== 'updated') {
+		return;
+	}
+	assert.equal(updated.set.id, created.set.id);
+	assert.equal(updated.set.name, 'Active Set');
+	assert.equal(updated.set.createdAt, 100);
+	assert.equal(updated.set.updatedAt, 200);
+	assert.deepEqual(updated.set.entries.map((entry) => entry.filePath), [
+		'items/one.md',
+		'items/two.md',
+	]);
+	assert.equal(sets.update('missing', queue.getEntries()).status, 'not-found');
+	assert.equal(sets.update(created.set.id, []).status, 'empty-queue');
+});
+
 void test('loading replaces once with fresh IDs, preserved order/quantity, and independent overrides', () => {
 	const sourceQueue = createQueue('source');
 	const weapon = sourceQueue.add('items/weapon.md', {
