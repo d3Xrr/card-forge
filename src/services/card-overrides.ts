@@ -4,7 +4,15 @@ import type {
 	CardStatOverrides,
 } from '../models/card-overrides';
 import { MANUAL_CARD_BREAK_DELIMITER } from '../models/card-overrides';
-import type { ItemCardData } from '../models/item';
+import type {
+	ItemCardData,
+	StructuredItemField,
+} from '../models/item';
+import {
+	formatItemRarity,
+	getSemanticItemTypeText,
+	getSourceAttunementText,
+} from './item-identity';
 
 export interface AppliedCardOverrides {
 	item: ItemCardData;
@@ -27,6 +35,8 @@ export function applyCardOverrides(
 	const hasIdentityOverride = overrides.typeText !== undefined
 		|| overrides.rarityText !== undefined
 		|| overrides.attunementText !== undefined;
+	const structuredFieldOrigins = { ...(baseItem.structuredFieldOrigins ?? {}) };
+	markOverrideOrigins(structuredFieldOrigins, overrides, stats);
 	const item: ItemCardData = {
 		...baseItem,
 		name: overrides?.title ?? baseItem.name,
@@ -34,13 +44,13 @@ export function applyCardOverrides(
 		...(hasIdentityOverride ? {
 			typeText: overrides.typeText !== undefined
 				? overrides.typeText ?? ''
-				: inferSourceTypeText(baseItem),
+				: getSemanticItemTypeText(baseItem),
 			rarityText: overrides.rarityText !== undefined
 				? overrides.rarityText ?? ''
-				: baseItem.rarity ? humanizeSlug(baseItem.rarity) : '',
+				: baseItem.rarity ? formatItemRarity(baseItem.rarity) : '',
 			attunementText: overrides.attunementText !== undefined
 				? overrides.attunementText ?? ''
-				: baseItem.attunement ? 'Requires attunement' : '',
+				: getSourceAttunementText(baseItem),
 		} : {}),
 		...(segments.length > 1 ? { manualRuleSegments: segments } : {}),
 		...(overrides?.sourceText !== undefined
@@ -59,6 +69,9 @@ export function applyCardOverrides(
 		...(stats?.mastery !== undefined ? { mastery: stats.mastery ?? undefined } : {}),
 		...(stats?.cost !== undefined ? { cost: stats.cost ?? undefined } : {}),
 		...(stats?.weight !== undefined ? { weight: stats.weight ?? undefined } : {}),
+		...(Object.keys(structuredFieldOrigins).length > 0
+			? { structuredFieldOrigins }
+			: {}),
 		...(artwork?.kind === 'vault'
 			? { imagePath: artwork.path, hasImage: true }
 			: artwork?.kind === 'temporary'
@@ -68,6 +81,31 @@ export function applyCardOverrides(
 				: {}),
 	};
 	return { item, overrides, fingerprint: createCardOverridesFingerprint(overrides) };
+}
+
+function markOverrideOrigins(
+	origins: NonNullable<ItemCardData['structuredFieldOrigins']>,
+	overrides: CardOverrides,
+	stats: CardStatOverrides | undefined,
+): void {
+	for (const field of ['typeText', 'rarityText', 'attunementText'] as const) {
+		if (overrides[field] !== undefined) {
+			origins[field] = 'override';
+		}
+	}
+	for (const field of [
+		'damage',
+		'damageTwoHanded',
+		'range',
+		'properties',
+		'mastery',
+		'cost',
+		'weight',
+	] as const satisfies readonly StructuredItemField[]) {
+		if (stats?.[field] !== undefined) {
+			origins[field] = 'override';
+		}
+	}
 }
 
 export function splitManualCardBreaks(markdown: string): string[] {
@@ -234,31 +272,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-}
-
-function inferSourceTypeText(item: ItemCardData): string {
-	if (!item.detail) {
-		return '';
-	}
-	let depth = 0;
-	let end = item.detail.length;
-	for (let index = 0; index < item.detail.length; index += 1) {
-		const character = item.detail[index];
-		if (character === '(') {
-			depth += 1;
-		} else if (character === ')') {
-			depth = Math.max(0, depth - 1);
-		} else if (character === ',' && depth === 0) {
-			end = index;
-			break;
-		}
-	}
-	const primary = item.detail.slice(0, end).trim();
-	const rarity = item.rarity ? humanizeSlug(item.rarity).toLocaleLowerCase() : '';
-	return rarity && primary.toLocaleLowerCase().startsWith(rarity) ? '' : primary;
-}
-
-function humanizeSlug(value: string): string {
-	const normalized = value.replaceAll('-', ' ').replaceAll('_', ' ').trim();
-	return normalized ? normalized[0]?.toLocaleUpperCase() + normalized.slice(1) : '';
 }

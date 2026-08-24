@@ -226,6 +226,7 @@ void test('measurement keys reuse identical pages but distinguish render inputs'
 		{ properties: ['Thrown', 'Versatile'] },
 		{ mastery: 'Topple' },
 		{ cost: '50 GP' },
+		{ structuredFieldOrigins: { cost: 'base' } },
 		{ weight: 4 },
 	];
 	for (const change of itemChanges) {

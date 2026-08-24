@@ -117,3 +117,23 @@ void test('editing one identity field retains inherited rarity and attunement', 
 	assert.equal(effective.rarityText, 'Rare');
 	assert.equal(effective.attunementText, 'Requires attunement');
 });
+
+void test('identity edits retain qualified source attunement and explicit fields own provenance', () => {
+	const item = {
+		...source,
+		detail: 'Weapon, legendary (requires attunement by a paladin)',
+		rarity: 'legendary',
+		attunement: true,
+		cost: '15 gp',
+		structuredFieldOrigins: { cost: 'base' as const },
+	};
+	const effective = applyCardOverrides(item, {
+		typeText: 'Holy weapon',
+		stats: { cost: '15000 gp' },
+	}).item;
+	assert.equal(effective.typeText, 'Holy weapon');
+	assert.equal(effective.rarityText, 'Legendary');
+	assert.equal(effective.attunementText, 'Requires attunement by a paladin');
+	assert.equal(effective.structuredFieldOrigins?.typeText, 'override');
+	assert.equal(effective.structuredFieldOrigins?.cost, 'override');
+});

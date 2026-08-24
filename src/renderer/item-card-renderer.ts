@@ -18,6 +18,7 @@ import {
 import { renderSafeMarkdownBlocks } from './safe-markdown-renderer';
 import { resolveSourceDisplay } from './source-formatter';
 import { renderItemStats } from './structured-item-stats';
+import { isUnknownRarityText } from '../services/item-identity';
 
 export type ArtworkLoadResult =
 	| { status: 'ready'; orientation: ArtworkOrientation }
@@ -261,7 +262,10 @@ export function buildItemIdentityLines(item: ItemCardData): string[] {
 		|| item.attunementText !== undefined
 	) {
 		const primary = item.typeText?.trim();
-		const metadata = [item.rarityText, item.attunementText]
+		const metadata = [
+			isUnknownRarityText(item.rarityText) ? undefined : item.rarityText,
+			item.attunementText,
+		]
 			.map((value) => value?.trim())
 			.filter((value): value is string => Boolean(value));
 		return [
@@ -277,6 +281,9 @@ export function buildItemIdentityLines(item: ItemCardData): string[] {
 		const detailMentionsAttunement = /requires attunement/iu.test(metadata);
 		const removedExactAttunement = exactAttunement.test(metadata);
 		metadata = metadata.replace(exactAttunement, '').trim();
+		if (isUnknownRarityText(metadata)) {
+			metadata = '';
+		}
 		const metadataParts = [
 			...(metadata ? [capitalizeFirst(metadata)] : []),
 			...(item.attunement && (removedExactAttunement || !detailMentionsAttunement)
@@ -290,7 +297,7 @@ export function buildItemIdentityLines(item: ItemCardData): string[] {
 	}
 
 	const parts: string[] = [];
-	if (item.rarity) {
+	if (item.rarity && !isUnknownRarityText(item.rarity)) {
 		parts.push(humanizeSlug(item.rarity));
 	}
 	if (item.attunement) {

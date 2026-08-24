@@ -1,4 +1,5 @@
 import type { ItemCardData } from '../models/item';
+import { getSemanticItemTypeText } from './item-identity';
 import { formatSourceDisplay } from '../renderer/source-formatter';
 
 export type AttunementFilter = 'all' | 'required' | 'none';
@@ -167,27 +168,7 @@ export function clearBatchSelection(): Set<string> {
 }
 
 export function getItemBrowserTypeText(item: ItemCardData): string {
-	const explicit = item.typeText?.trim();
-	if (explicit) {
-		return explicit;
-	}
-	if (!item.detail) {
-		return '';
-	}
-	let depth = 0;
-	for (let index = 0; index < item.detail.length; index += 1) {
-		const character = item.detail[index];
-		if (character === '(') {
-			depth += 1;
-		} else if (character === ')') {
-			depth = Math.max(0, depth - 1);
-		} else if (character === ',' && depth === 0) {
-			return item.detail.slice(0, index).trim();
-		}
-	}
-	const detail = item.detail.trim();
-	const rarity = normalizeBrowserFilterValue(item.rarity ? humanizeSlug(item.rarity) : '');
-	return rarity && normalizeBrowserFilterValue(detail).startsWith(rarity) ? '' : detail;
+	return getSemanticItemTypeText(item);
 }
 
 export function normalizeBrowserFilterValue(value: string | undefined): string {

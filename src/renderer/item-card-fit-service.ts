@@ -1,4 +1,7 @@
-import type { ItemCardData } from '../models/item';
+import {
+	createStructuredItemFieldOriginsSnapshot,
+	type ItemCardData,
+} from '../models/item';
 import type { ArtworkOrientation, ItemCardPage } from '../models/item-card-page';
 import {
 	createCanonicalMeasurementRoot,
@@ -103,7 +106,7 @@ interface PageMeasurementCache {
 
 const ARTWORK_SHARE_CANDIDATES = [undefined, 20, 16] as const;
 const MAXIMUM_ARTWORK_PAGE_PENALTY = 1;
-export const ITEM_CARD_MEASUREMENT_RENDER_REVISION = 'item-card-renderer-css-v3';
+export const ITEM_CARD_MEASUREMENT_RENDER_REVISION = 'item-card-renderer-css-v4';
 
 export class ItemCardFitService {
 	constructor(
@@ -542,6 +545,7 @@ export function createItemCardPageMeasurementKey(
 			typeText: page.item.typeText ?? null,
 			rarityText: page.item.rarityText ?? null,
 			attunementText: page.item.attunementText ?? null,
+			structuredFieldOrigins: createStructuredItemFieldOriginsSnapshot(page.item),
 			manualRuleSegments: page.item.manualRuleSegments
 				? [...page.item.manualRuleSegments]
 				: null,

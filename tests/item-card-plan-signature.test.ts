@@ -55,7 +55,10 @@ void test('distinguishes output-relevant page, item, and semantic content change
 		mutatePlan(baseline, (pages) => { pages[0]!.artworkOrientation = 'square'; }),
 		mutatePlan(baseline, (pages) => { pages[0]!.title = 'Renamed item'; }),
 		mutatePlan(baseline, (pages) => { pages[0]!.item.detail = 'Different identity'; }),
-		mutatePlan(baseline, (pages) => { pages[0]!.item.damage = '2d6 force'; }),
+			mutatePlan(baseline, (pages) => { pages[0]!.item.damage = '2d6 force'; }),
+			mutatePlan(baseline, (pages) => {
+				pages[0]!.item.structuredFieldOrigins = { cost: 'base' };
+			}),
 		mutatePlan(baseline, (pages) => {
 			pages[0]!.item.sourceDisplayOverride = 'Literal source';
 		}),

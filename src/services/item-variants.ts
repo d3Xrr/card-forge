@@ -1,4 +1,13 @@
-import type { ItemCardData } from '../models/item';
+import type {
+	ItemCardData,
+	StructuredItemField,
+	StructuredItemFieldOrigin,
+} from '../models/item';
+import {
+	formatItemRarity,
+	getSemanticItemTypeText,
+	getSourceAttunementText,
+} from './item-identity';
 
 export interface ItemCardVariant {
 	id: string;
@@ -24,9 +33,6 @@ export function discoverItemVariants(
 	const magicRules = source.description.slice(0, marker.index).trim();
 	const variantRegion = source.description.slice(marker.index + marker[0].length);
 	const headings = [...variantRegion.matchAll(VARIANT_HEADING)];
-	const itemsByName = new Map(
-		indexedItems.map((item) => [normalizeLookupName(item.name), item]),
-	);
 	const variants: ItemCardVariant[] = [];
 	for (const [index, heading] of headings.entries()) {
 		const label = heading[1]?.trim();
@@ -42,11 +48,25 @@ export function discoverItemVariants(
 			label,
 			inferredBaseName,
 			indexedItems,
-			itemsByName,
 		);
 		const baseName = baseItem?.name ?? inferredBaseName;
 		const parsed = parseVariantSection(sectionMarkdown);
-		const base = baseItem ?? source;
+		const inheritedStats = baseItem
+			? inheritMissingBaseStats(source, baseItem)
+			: {};
+		const typeText = getSemanticItemTypeText(baseItem ?? source);
+		const rarityText = source.rarityText
+			?? (source.rarity ? formatItemRarity(source.rarity) : '');
+		const attunementText = getSourceAttunementText(source);
+		const structuredFieldOrigins = createVariantFieldOrigins(
+			source,
+			baseItem,
+			inheritedStats,
+			parsed.stats,
+			typeText,
+			rarityText,
+			attunementText,
+		);
 		const description = [magicRules, parsed.rulesMarkdown]
 			.filter(Boolean)
 			.join('\n\n');
@@ -60,11 +80,14 @@ export function discoverItemVariants(
 				...source,
 				name: label,
 				description,
-				...(base.detail ? { typeText: base.detail } : {}),
-				...(source.rarity ? { rarityText: formatRarity(source.rarity) } : {}),
-				...(source.attunement ? { attunementText: 'Requires attunement' } : {}),
-				...copyBaseStats(base),
+				...(typeText ? { typeText } : {}),
+				...(rarityText ? { rarityText } : {}),
+				...(attunementText ? { attunementText } : {}),
+				...inheritedStats,
 				...parsed.stats,
+				...(Object.keys(structuredFieldOrigins).length > 0
+					? { structuredFieldOrigins }
+					: {}),
 			},
 		});
 	}
@@ -76,24 +99,20 @@ function resolveVariantBaseItem(
 	label: string,
 	inferredBaseName: string | undefined,
 	items: readonly ItemCardData[],
-	itemsByName: ReadonlyMap<string, ItemCardData>,
 ): ItemCardData | undefined {
-	if (inferredBaseName) {
-		const exact = itemsByName.get(normalizeLookupName(inferredBaseName));
-		if (exact && exact.filePath !== source.filePath) {
-			return exact;
-		}
-	}
-	const inferred = normalizeLookupName(inferredBaseName ?? label);
+	const inferred = inferredBaseName ? normalizeLookupName(inferredBaseName) : '';
 	const normalizedLabel = normalizeLookupName(label);
+	const labelWithoutBonus = stripMagicBonus(normalizedLabel);
 	return items
 		.filter((item) => item.filePath !== source.filePath)
-		.filter((item) => {
-			const candidate = normalizeLookupName(item.name);
-			return inferred.startsWith(`${candidate} `)
-				|| normalizedLabel.endsWith(` ${candidate}`);
-		})
-		.sort((left, right) => right.name.length - left.name.length)[0];
+		.map((item) => ({ item, score: scoreBaseCandidate(
+			item,
+			inferred,
+			normalizedLabel,
+			labelWithoutBonus,
+		) }))
+		.filter((candidate) => candidate.score > 0)
+		.sort((left, right) => right.score - left.score)[0]?.item;
 }
 
 export function selectItemVariant(
@@ -218,23 +237,114 @@ function cleanInlineValue(value: string): string {
 		.trim();
 }
 
-function copyBaseStats(item: ItemCardData): Partial<ItemCardData> {
-	return {
-		...(item.damage ? { damage: item.damage } : {}),
-		...(item.damageTwoHanded ? { damageTwoHanded: item.damageTwoHanded } : {}),
-		...(item.range ? { range: item.range } : {}),
-		...(item.properties ? { properties: [...item.properties] } : {}),
-		...(item.mastery ? { mastery: item.mastery } : {}),
-		...(item.cost ? { cost: item.cost } : {}),
-		...(item.weight !== undefined ? { weight: item.weight } : {}),
-	};
+const STAT_FIELDS = [
+	'damage',
+	'damageTwoHanded',
+	'range',
+	'properties',
+	'mastery',
+	'cost',
+	'weight',
+] as const satisfies readonly StructuredItemField[];
+
+function inheritMissingBaseStats(
+	source: ItemCardData,
+	base: ItemCardData,
+): Partial<ItemCardData> {
+	const inherited: Partial<ItemCardData> = {};
+	for (const field of STAT_FIELDS) {
+		if (source[field] !== undefined || base[field] === undefined) {
+			continue;
+		}
+		if (field === 'properties') {
+			inherited.properties = [...(base.properties ?? [])];
+		} else {
+			assignItemField(inherited, field, base[field]);
+		}
+	}
+	return inherited;
 }
 
-function formatRarity(value: string): string {
+function createVariantFieldOrigins(
+	source: ItemCardData,
+	baseItem: ItemCardData | undefined,
+	inheritedStats: Partial<ItemCardData>,
+	parsedStats: Partial<ItemCardData>,
+	typeText: string,
+	rarityText: string,
+	attunementText: string,
+): Partial<Record<StructuredItemField, StructuredItemFieldOrigin>> {
+	const origins = { ...(source.structuredFieldOrigins ?? {}) };
+	if (typeText) {
+		origins.typeText = baseItem ? 'base' : 'source';
+	}
+	if (rarityText) {
+		origins.rarityText = 'source';
+	}
+	if (attunementText) {
+		origins.attunementText = 'source';
+	}
+	markPresentFieldOrigins(origins, inheritedStats, 'base');
+	markPresentFieldOrigins(origins, parsedStats, 'source');
+	return origins;
+}
+
+function markPresentFieldOrigins(
+	origins: Partial<Record<StructuredItemField, StructuredItemFieldOrigin>>,
+	item: Partial<ItemCardData>,
+	origin: StructuredItemFieldOrigin,
+): void {
+	for (const field of STAT_FIELDS) {
+		if (Object.prototype.hasOwnProperty.call(item, field)) {
+			origins[field] = origin;
+		}
+	}
+}
+
+function assignItemField<K extends Exclude<(typeof STAT_FIELDS)[number], 'properties'>>(
+	item: Partial<ItemCardData>,
+	field: K,
+	value: ItemCardData[K],
+): void {
+	item[field] = value;
+}
+
+function scoreBaseCandidate(
+	item: ItemCardData,
+	inferred: string,
+	label: string,
+	labelWithoutBonus: string,
+): number {
+	const candidate = normalizeLookupName(item.name);
+	let matchScore = 0;
+	if (inferred && candidate === inferred) {
+		matchScore = 500;
+	} else if (candidate === label || candidate === labelWithoutBonus) {
+		matchScore = 480;
+	} else if (
+		label.startsWith(`${candidate} `)
+		|| labelWithoutBonus.startsWith(`${candidate} `)
+	) {
+		matchScore = 400;
+	} else if (
+		label.endsWith(` ${candidate}`)
+		|| labelWithoutBonus.endsWith(` ${candidate}`)
+	) {
+		matchScore = 380;
+	}
+	if (matchScore === 0) {
+		return 0;
+	}
+	const mundaneBonus = item.rarity ? 0 : 200;
+	const equipmentBonus = /^(?:weapon|armor)\b/iu.test(getSemanticItemTypeText(item)) ? 20 : 0;
+	return matchScore + mundaneBonus + equipmentBonus + candidate.length / 1000;
+}
+
+function stripMagicBonus(value: string): string {
 	return value
-		.replaceAll('_', ' ')
-		.replaceAll('-', ' ')
-		.replace(/\b\w/gu, (letter) => letter.toLocaleUpperCase());
+		.replace(/^[+-]\d+\s+/u, '')
+		.replace(/\s+[+-]\d+$/u, '')
+		.trim();
 }
 
 function normalizeLookupName(value: string): string {

@@ -86,6 +86,41 @@ void test('edited identity fields override source detail without changing source
 	}), ['Custom weapon', 'Mythic · Attunement by a hero']);
 });
 
+void test('Unknown rarity is an exact case-insensitive non-printing sentinel', () => {
+	const base = {
+		filePath: 'items/multiweapon.md',
+		name: 'Multiweapon',
+		description: '',
+		typeText: 'Weapon',
+		hasImage: false,
+		rawTags: [],
+	};
+	for (const rarityText of ['Unknown', ' unknown ', 'UNKNOWN']) {
+		assert.deepEqual(buildItemIdentityLines({ ...base, rarityText }), ['Weapon']);
+	}
+	assert.deepEqual(buildItemIdentityLines({ ...base, rarityText: 'Rare' }), [
+		'Weapon',
+		'Rare',
+	]);
+	assert.deepEqual(buildItemIdentityLines({ ...base, rarityText: 'Unknowns' }), [
+		'Weapon',
+		'Unknowns',
+	]);
+	assert.deepEqual(buildItemIdentityLines({
+		...base,
+		typeText: undefined,
+		rarityText: undefined,
+		rarity: 'unknown',
+	}), []);
+	assert.deepEqual(buildItemIdentityLines({
+		...base,
+		typeText: undefined,
+		rarityText: undefined,
+		detail: 'Weapon, Unknown',
+		rarity: 'unknown',
+	}), ['Weapon']);
+});
+
 void test('formats Monsters of Drakkenheim sources for card and browser', () => {
 	const sourceText = 'Monsters of Drakkenheim p. 395';
 	assert.equal(

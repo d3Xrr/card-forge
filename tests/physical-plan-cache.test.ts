@@ -49,6 +49,7 @@ void test('builds a canonical key from every physical planning input slot', () =
 		'typeText',
 		'rarityText',
 		'attunementText',
+		'structuredFieldOrigins',
 		'manualRuleSegments',
 	]);
 	assert.equal(createPhysicalPlanCacheKey(structuredClone(input)), key);
@@ -65,6 +66,13 @@ void test('builds a canonical key from every physical planning input slot', () =
 		{ ...input, item: { ...input.item, manualRuleSegments: ['A', 'B'] } },
 		{
 			...input,
+			item: {
+				...input.item,
+				structuredFieldOrigins: { cost: 'base' },
+			},
+		},
+		{
+			...input,
 			artworkFingerprint: { ...input.artworkFingerprint!, modifiedTime: 124 },
 		},
 		{
@@ -79,6 +87,19 @@ void test('builds a canonical key from every physical planning input slot', () =
 	for (const variant of variants) {
 		assert.notEqual(createPhysicalPlanCacheKey(variant), key);
 	}
+});
+
+void test('equal Cost text with inherited and explicit provenance cannot share a plan', () => {
+	const input = createKeyInput();
+	const inherited = createPhysicalPlanCacheKey({
+		...input,
+		item: { ...input.item, structuredFieldOrigins: { cost: 'base' } },
+	});
+	const explicit = createPhysicalPlanCacheKey({
+		...input,
+		item: { ...input.item, structuredFieldOrigins: { cost: 'override' } },
+	});
+	assert.notEqual(inherited, explicit);
 });
 
 void test('deduplicates concurrent work and exposes the completed plan', async () => {

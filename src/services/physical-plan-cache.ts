@@ -1,13 +1,16 @@
-import type { ItemCardData } from '../models/item';
+import {
+	createStructuredItemFieldOriginsSnapshot,
+	type ItemCardData,
+} from '../models/item';
 import {
 	PHYSICAL_CARD_PROFILE,
 	type PhysicalCardProfile,
 } from '../models/physical-card-profile';
 
 export const DEFAULT_PHYSICAL_PLAN_CACHE_CAPACITY = 128;
-export const PHYSICAL_PLAN_CACHE_SCHEMA_REVISION = 'physical-plan-cache-v1';
-export const DEFAULT_PHYSICAL_PLAN_PLANNER_REVISION = 'item-card-planner-v3-overrides';
-export const DEFAULT_PHYSICAL_PLAN_RENDERER_REVISION = 'item-card-renderer-css-v4';
+export const PHYSICAL_PLAN_CACHE_SCHEMA_REVISION = 'physical-plan-cache-v2';
+export const DEFAULT_PHYSICAL_PLAN_PLANNER_REVISION = 'item-card-planner-v4-field-provenance';
+export const DEFAULT_PHYSICAL_PLAN_RENDERER_REVISION = 'item-card-renderer-css-v5';
 export const EMPTY_PHYSICAL_PLAN_FINGERPRINT = 'none';
 
 export interface PhysicalPlanArtworkFingerprint {
@@ -336,6 +339,7 @@ function createCanonicalItemFingerprint(item: ItemCardData): object {
 		typeText: item.typeText ?? null,
 		rarityText: item.rarityText ?? null,
 		attunementText: item.attunementText ?? null,
+		structuredFieldOrigins: createStructuredItemFieldOriginsSnapshot(item),
 		manualRuleSegments: item.manualRuleSegments
 			? [...item.manualRuleSegments]
 			: null,

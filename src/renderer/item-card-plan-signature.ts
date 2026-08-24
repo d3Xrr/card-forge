@@ -1,11 +1,16 @@
-import type { ItemCardData } from '../models/item';
+import {
+	createStructuredItemFieldOriginsSnapshot,
+	type ItemCardData,
+	type StructuredItemField,
+	type StructuredItemFieldOrigin,
+} from '../models/item';
 import type {
 	ItemCardPage,
 	MarkdownBlock,
 } from '../models/item-card-page';
 import { PHYSICAL_CARD_PROFILE } from '../models/physical-card-profile';
 
-export const ITEM_CARD_PLAN_SIGNATURE_VERSION = 'item-card-plan-signature-v1';
+export const ITEM_CARD_PLAN_SIGNATURE_VERSION = 'item-card-plan-signature-v2';
 
 export interface HashedPlanText {
 	length: number;
@@ -88,6 +93,7 @@ export interface ItemCardPlanItemSignature {
 	typeText: HashedPlanText | null;
 	rarityText: HashedPlanText | null;
 	attunementText: HashedPlanText | null;
+	structuredFieldOrigins: Record<StructuredItemField, StructuredItemFieldOrigin>;
 	manualRuleSegments: HashedPlanText[];
 }
 
@@ -206,6 +212,7 @@ function createItemSignature(item: ItemCardData): ItemCardPlanItemSignature {
 		typeText: hashOptionalPlanText(item.typeText),
 		rarityText: hashOptionalPlanText(item.rarityText),
 		attunementText: hashOptionalPlanText(item.attunementText),
+		structuredFieldOrigins: createStructuredItemFieldOriginsSnapshot(item),
 		manualRuleSegments: (item.manualRuleSegments ?? []).map(hashPlanText),
 	};
 }

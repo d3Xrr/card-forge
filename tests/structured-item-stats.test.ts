@@ -83,6 +83,35 @@ void test('includes range in centralized structured statistics', () => {
 	});
 });
 
+void test('base provenance hides only inherited Cost from physical statistics', () => {
+	const item = createItem({
+		damage: '1d6 piercing',
+		damageTwoHanded: '1d8 piercing',
+		range: '20/60',
+		properties: ['Thrown', 'Versatile'],
+		mastery: 'Sap',
+		cost: '1 gp',
+		weight: 3,
+		structuredFieldOrigins: {
+			damage: 'base',
+			damageTwoHanded: 'base',
+			range: 'base',
+			properties: 'base',
+			mastery: 'base',
+			cost: 'base',
+			weight: 'base',
+		},
+	});
+	assert.deepEqual(buildItemStatRows(item).map((row) => row.label), [
+		'Damage',
+		'Properties',
+		'Mastery',
+		'Range',
+		'Weight',
+	]);
+	assert.equal(hasMeaningfulItemStats(item), true);
+});
+
 void test('promotes Scimitar metadata to labeled structured rows', () => {
 	const item = createItem({
 		name: 'Scimitar of Speed',

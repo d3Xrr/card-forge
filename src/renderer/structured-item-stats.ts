@@ -1,4 +1,7 @@
-import type { ItemCardData } from '../models/item';
+import {
+	getStructuredItemFieldOrigin,
+	type ItemCardData,
+} from '../models/item';
 import type {
 	ItemCardLayout,
 	ItemStatsPresentation,
@@ -30,9 +33,18 @@ export function getItemStats(item: ItemCardData): ItemStats {
 		...(item.range ? { range: item.range } : {}),
 		properties: [...(item.properties ?? [])],
 		...(item.mastery ? { mastery: item.mastery } : {}),
-		...(item.cost ? { cost: item.cost } : {}),
+		...(item.cost && shouldRenderStructuredItemField(item, 'cost')
+			? { cost: item.cost }
+			: {}),
 		...(item.weight !== undefined ? { weight: item.weight } : {}),
 	};
+}
+
+export function shouldRenderStructuredItemField(
+	item: ItemCardData,
+	field: 'cost',
+): boolean {
+	return getStructuredItemFieldOrigin(item, field) !== 'base';
 }
 
 export function hasMeaningfulItemStats(item: ItemCardData): boolean {
