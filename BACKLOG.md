@@ -2,6 +2,20 @@
 
 This file tracks completed workflow milestones and intentionally deferred work.
 
+## Implemented for 0.7.0 development
+
+- Added an explicit bounded `CardDesignProfile` that keeps theme, artwork allocation, density, and optional known-field visibility separate from source content and print overrides.
+- Added the peer `Preview | Edit card | Design | Source note` workflow with one live canonical preview; source drafts retain design across tabs and queue-entry Save/Discard operates atomically on content plus design.
+- Added global defaults for Dark/Light/Printer Friendly, Standard/Larger/Minimal/Hidden artwork, and Standard/Compact density. Defaults affect source previews and future adds only; queue and Saved Set entries snapshot resolved design.
+- Preserved missing pre-0.7.0 design data as the stable Dark/Standard/Standard/automatic legacy profile, independent of later global-default changes.
+- Added scoped physical-card theme tokens. Dark retains the 0.6.1 appearance, Light uses a readable light surface, and Printer Friendly uses white, low-ink surfaces with grayscale-readable hierarchy.
+- Added planner-owned artwork allocations: Larger uses 56% image, 42% portrait, or 36% compact allocation; Minimal uses 16% image/compact or the safe 28% portrait column; Hidden retains the artwork selection while removing it from layout.
+- Added bounded visibility overrides for Damage, Two-handed damage, Properties, Mastery, Range, Weight, Cost, and Source. Semantic automatic provenance remains authoritative, including inherited Cost hidden until explicitly force-shown.
+- Added Compact as a measured spacing-only density preset. It reduces non-identity rhythm without font scaling, and every candidate still passes the canonical 750 × 1050 overflow measurement.
+- Split design identity into layout and visual fingerprints: artwork, fields, and density replan; theme-only changes reuse physical pages and rerasterize.
+- Persisted independent design snapshots through queue add, batch add, current-item commands, Duplicate, restart, active Saved Set dirty comparison, Saved Set Save/Load, mixed A4 preview, and PDF export.
+- Kept the existing missing temporary-artwork export block even when artwork presentation is Hidden; changing that lifecycle rule remains outside this presentation phase.
+
 ## Implemented in 0.6.1 stabilization
 
 - Added bounded source/base/override provenance for structured card fields and included it in physical-plan identities.
@@ -19,8 +33,11 @@ This file tracks completed workflow milestones and intentionally deferred work.
 - **0.6.1 — Stabilization / parser hygiene / responsive workspace.**
 - **0.7.0 — Card Presentation / Design System.** Intended scope: a Design tab; Dark, Light, and Printer Friendly presets; Standard, Larger, Minimal, and Hidden artwork sizing; bounded field visibility; and safe information-density presets. This work must avoid arbitrary CSS customization and preserve planner/fitting guarantees.
 - **0.8.0 — Duplex / card backs / printer calibration.**
+- **0.9.x — Print and workflow quality-of-life.**
 
-The 0.7.0 and 0.8.0 items are documentation only and are not implemented in 0.6.1.
+Potential **1.0** remains the stable complete CLI item-to-physical-card workflow with finalized front/back design and printing. Generic platform work may remain post-1.0.
+
+The 0.8.0 and 0.9.x items remain roadmap documentation and are not part of the 0.7.0 development build.
 
 ## Implemented in Phase 4C core
 
@@ -67,12 +84,8 @@ Measure Card Forge resource use while the plugin is enabled and its view is not 
 
 ## Longer-term deferred work
 
-- Customization presets.
-- A printer-friendly style preset.
 - Duplex printing and card backs.
-- Design tab with bounded Dark, Light, and Printer Friendly presentation presets.
-- Standard, Larger, Minimal, and Hidden artwork-size presets.
-- Bounded field-visibility and information-density controls.
+- Additional bounded presentation presets only after real physical-card testing.
 - Generic Markdown input and parser work.
 - A manual custom-card creator.
 - Additional card types, including spells, feats, conditions, and monster or NPC cards.
