@@ -212,6 +212,10 @@ void test('measurement keys reuse identical pages but distinguish render inputs'
 	assert.notEqual(createItemCardPageMeasurementKey({ ...page, artworkSharePercent: 16 }, artworkFingerprint), key);
 	assert.notEqual(createItemCardPageMeasurementKey({
 		...page,
+		compactStatRowSpans: ['half', 'half'],
+	}, artworkFingerprint), key);
+	assert.notEqual(createItemCardPageMeasurementKey({
+		...page,
 		blocks: [{ type: 'paragraph', markdown: 'Changed rendered rules.' }],
 	}, artworkFingerprint), key);
 

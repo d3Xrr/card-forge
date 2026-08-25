@@ -10,6 +10,7 @@ import {
 import type {
 	ItemCardLayout,
 	ItemStatsPresentation,
+	CompactStatRowSpan,
 } from '../models/item-card-page';
 
 export interface ItemStats {
@@ -28,9 +29,12 @@ export interface ItemStatRow {
 }
 
 export type CompactStatsLayout = 'grid' | 'stacked';
-export type CompactStatRowSpan = 'half' | 'full';
-
 const COMPACT_ATOMIC_VALUE_MAX_LENGTH = 26;
+
+export interface CompactStatCellWidth {
+	requiredWidth: number;
+	availableWidth: number;
+}
 
 export function getItemStats(
 	item: ItemCardData,
@@ -125,13 +129,16 @@ export function estimateItemStatsLoad(
 	presentation: ItemStatsPresentation,
 	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 	cardLayout: ItemCardLayout = 'text',
+	measuredRowSpans?: readonly CompactStatRowSpan[],
 ): number {
 	if (presentation === 'compact') {
 		const rows = buildItemStatRows(item, design);
 		if (selectCompactStatsLayout(presentation, cardLayout) === 'stacked') {
 			return rows.length * 1.15;
 		}
-		const rowUnits = getCompactStatRowSpans(rows).reduce(
+		const rowSpans = normalizeCompactStatRowSpans(rows, measuredRowSpans)
+			?? getCompactStatRowSpans(rows);
+		const rowUnits = rowSpans.reduce(
 			(total, span) => total + (span === 'full' ? 1 : 0.5),
 			0,
 		);
@@ -149,11 +156,13 @@ export function renderItemStats(
 	presentation: ItemStatsPresentation,
 	cardLayout: ItemCardLayout,
 	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
+	measuredRowSpans?: readonly CompactStatRowSpan[],
 ): void {
 	const rows = buildItemStatRows(item, design);
 	const compactLayout = selectCompactStatsLayout(presentation, cardLayout);
 	const compactRowSpans = presentation === 'compact' && compactLayout === 'grid'
-		? getCompactStatRowSpans(rows)
+		? normalizeCompactStatRowSpans(rows, measuredRowSpans)
+			?? getCompactStatRowSpans(rows)
 		: [];
 	const stats = container.createDiv({
 		cls: [
@@ -226,6 +235,51 @@ export function getCompactStatRowSpans(
 		spans[pendingHalfIndex] = 'full';
 	}
 	return spans;
+}
+
+export function promoteUnsafeCompactStatPairs(
+	spans: readonly CompactStatRowSpan[],
+	widths: readonly CompactStatCellWidth[],
+): CompactStatRowSpan[] {
+	const safeSpans = [...spans];
+	let pendingHalfIndex: number | undefined;
+	for (const [index, span] of safeSpans.entries()) {
+		if (span === 'full') {
+			pendingHalfIndex = undefined;
+			continue;
+		}
+		if (pendingHalfIndex === undefined) {
+			pendingHalfIndex = index;
+			continue;
+		}
+		const firstWidth = widths[pendingHalfIndex];
+		const secondWidth = widths[index];
+		if (!firstWidth || !secondWidth
+			|| !isCompactStatCellWidthSafe(firstWidth)
+			|| !isCompactStatCellWidthSafe(secondWidth)) {
+			safeSpans[pendingHalfIndex] = 'full';
+			safeSpans[index] = 'full';
+		}
+		pendingHalfIndex = undefined;
+	}
+	if (pendingHalfIndex !== undefined) {
+		safeSpans[pendingHalfIndex] = 'full';
+	}
+	return safeSpans;
+}
+
+export function isCompactStatCellWidthSafe(width: CompactStatCellWidth): boolean {
+	return Number.isFinite(width.requiredWidth)
+		&& Number.isFinite(width.availableWidth)
+		&& width.availableWidth > 0
+		&& width.requiredWidth <= width.availableWidth;
+}
+
+function normalizeCompactStatRowSpans(
+	rows: readonly ItemStatRow[],
+	spans: readonly CompactStatRowSpan[] | undefined,
+): CompactStatRowSpan[] | undefined {
+	return spans?.length === rows.length ? [...spans] : undefined;
 }
 
 export function isCompactAtomicStatValue(label: string, value: string): boolean {

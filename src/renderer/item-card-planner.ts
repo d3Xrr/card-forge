@@ -11,6 +11,7 @@ import type {
 	ItemCardPage,
 	ItemCardPageKind,
 	ItemStatsPresentation,
+	CompactStatRowSpan,
 } from '../models/item-card-page';
 import type { ArtworkOrientation } from './artwork-orientation';
 import {
@@ -42,6 +43,7 @@ export interface ItemCardPlanOptions {
 	capacityScale?: number;
 	bodyFontPoints?: number;
 	artworkSharePercent?: number;
+	compactStatRowSpans?: readonly CompactStatRowSpan[];
 	design?: CardDesignProfile;
 	performanceTrace?: PlanningPerformanceTrace;
 }
@@ -72,6 +74,7 @@ interface PlannedPageContent {
 	showArtwork: boolean;
 	showStats: boolean;
 	statsPresentation?: ItemStatsPresentation;
+	compactStatRowSpans?: CompactStatRowSpan[];
 	bodyFontPoints: number;
 	artworkSharePercent?: number;
 	hasUnsplitOverflow: boolean;
@@ -163,6 +166,7 @@ function createItemCardPlanOptionsKey(
 			),
 		),
 		artworkSharePercent: options.artworkSharePercent ?? null,
+		compactStatRowSpans: options.compactStatRowSpans ?? null,
 		layoutDesignFingerprint: createLayoutDesignFingerprint(options.design),
 	});
 }
@@ -216,7 +220,13 @@ export function planPreparedItemCardPages(
 	const primaryContentCapacity = Math.max(
 		1,
 		primaryCapacity - (statsPresentation
-			? estimateItemStatsLoad(item, statsPresentation, design, primaryLayout)
+			? estimateItemStatsLoad(
+				item,
+				statsPresentation,
+				design,
+				primaryLayout,
+				options.compactStatRowSpans,
+			)
 			: 0),
 	);
 	const continuationCapacity = MINIMUM_BODY_CAPACITIES.continuation
@@ -233,6 +243,9 @@ export function planPreparedItemCardPages(
 			showArtwork: artworkAvailable && primaryLayout !== 'text',
 			showStats: statsPresentation !== undefined,
 			...(statsPresentation ? { statsPresentation } : {}),
+			...(options.compactStatRowSpans
+				? { compactStatRowSpans: [...options.compactStatRowSpans] }
+				: {}),
 			bodyFontPoints,
 			...(artworkSharePercent !== undefined
 				? { artworkSharePercent }
@@ -249,6 +262,7 @@ export function planPreparedItemCardPages(
 			primaryLayout,
 			artworkAvailable,
 			statsPresentation,
+			options.compactStatRowSpans,
 			bodyFontPoints,
 			artworkSharePercent,
 		);
@@ -268,6 +282,9 @@ export function planPreparedItemCardPages(
 			showArtwork: artworkAvailable && primaryLayout !== 'text',
 			showStats: statsPresentation !== undefined,
 			...(statsPresentation ? { statsPresentation } : {}),
+			...(options.compactStatRowSpans
+				? { compactStatRowSpans: [...options.compactStatRowSpans] }
+				: {}),
 			bodyFontPoints,
 			...(artworkSharePercent !== undefined
 				? { artworkSharePercent }
@@ -297,6 +314,9 @@ export function planPreparedItemCardPages(
 		showStats: page.showStats,
 		...(page.statsPresentation
 			? { statsPresentation: page.statsPresentation }
+			: {}),
+		...(page.compactStatRowSpans
+			? { compactStatRowSpans: [...page.compactStatRowSpans] }
 			: {}),
 		showSource: pageIndex === pageCount - 1
 			&& isCardDesignFieldVisible(item, 'source', design),
@@ -472,6 +492,7 @@ function appendPackedSection(
 	primaryLayout: ItemCardLayout,
 	artworkAvailable: boolean,
 	statsPresentation: ItemStatsPresentation | undefined,
+	compactStatRowSpans: readonly CompactStatRowSpan[] | undefined,
 	bodyFontPoints: number,
 	artworkSharePercent: number | undefined,
 ): void {
@@ -488,6 +509,9 @@ function appendPackedSection(
 		showArtwork: artworkAvailable && primaryLayout !== 'text',
 		showStats: statsPresentation !== undefined,
 		...(statsPresentation ? { statsPresentation } : {}),
+		...(compactStatRowSpans
+			? { compactStatRowSpans: [...compactStatRowSpans] }
+			: {}),
 		bodyFontPoints,
 		...(artworkSharePercent !== undefined ? { artworkSharePercent } : {}),
 		hasUnsplitOverflow: firstPage.oversizedPageIndexes.has(0),

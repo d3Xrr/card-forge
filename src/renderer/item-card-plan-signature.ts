@@ -11,7 +11,7 @@ import type {
 import type { ResolvedCardDensity } from '../models/card-design';
 import { PHYSICAL_CARD_PROFILE } from '../models/physical-card-profile';
 
-export const ITEM_CARD_PLAN_SIGNATURE_VERSION = 'item-card-plan-signature-v3-density';
+export const ITEM_CARD_PLAN_SIGNATURE_VERSION = 'item-card-plan-signature-v4-stat-packing';
 
 export interface HashedPlanText {
 	length: number;
@@ -70,6 +70,7 @@ export interface ItemCardPageSignature {
 	showArtwork: boolean;
 	showStats: boolean;
 	statsPresentation: ItemCardPage['statsPresentation'] | null;
+	compactStatRowSpans: ItemCardPage['compactStatRowSpans'] | null;
 	showSource: boolean;
 	artworkOrientation: ItemCardPage['artworkOrientation'] | null;
 	hasUnsplitOverflow: boolean;
@@ -187,6 +188,9 @@ function createPageSignature(page: ItemCardPage): ItemCardPageSignature {
 		showArtwork: page.showArtwork,
 		showStats: page.showStats,
 		statsPresentation: page.statsPresentation ?? null,
+		compactStatRowSpans: page.compactStatRowSpans
+			? [...page.compactStatRowSpans]
+			: null,
 		showSource: page.showSource,
 		artworkOrientation: page.artworkOrientation ?? null,
 		hasUnsplitOverflow: page.hasUnsplitOverflow,

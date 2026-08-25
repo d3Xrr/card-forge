@@ -98,6 +98,20 @@ export function selectPreferredDensityBodyFontPoints(
 	);
 }
 
+export function getMonotonicDensityBodyFontCandidates(
+	density: ResolvedCardDensity,
+	standardBodyFontCeiling?: number,
+): number[] {
+	const candidates = [...DENSITY_PLANNING_POLICIES[density].bodyFontPoints];
+	if (density === 'standard' || standardBodyFontCeiling === undefined) {
+		return candidates;
+	}
+	const bounded = candidates.filter((points) => points <= standardBodyFontCeiling);
+	return bounded.length > 0
+		? bounded
+		: [PRINT_SAFE_MINIMUM_BODY_FONT_POINTS];
+}
+
 export interface AutoDensityCandidate {
 	resolvedDensity: ResolvedCardDensity;
 	pageCount: number;

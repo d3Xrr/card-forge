@@ -19,7 +19,14 @@ import {
 } from '../src/models/card-design';
 import type { ItemCardData } from '../src/models/item';
 import { PHYSICAL_CARD_PROFILE } from '../src/models/physical-card-profile';
-import { getItemCardLayoutProfile } from '../src/renderer/item-card-layout';
+import {
+	getAdaptiveBodyFontCandidates,
+	getItemCardLayoutProfile,
+} from '../src/renderer/item-card-layout';
+import {
+	chooseAutoDensityCandidate,
+	getMonotonicDensityBodyFontCandidates,
+} from '../src/renderer/card-design-policy';
 import {
 	flattenPageContent,
 	planItemCardPages,
@@ -157,6 +164,9 @@ void test('runs a deterministic planner matrix across ten fixture classes', () =
 	assert.equal(profilesTested, PLANNER_PROFILE_COUNT);
 	assert.equal(plansGenerated, PLANNER_PROFILE_COUNT * fixtures.length);
 	assert.equal(largerArtworkOmissions, 0);
+	const densityMatrix = runDensityMonotonicityMatrix(fixtures, fieldMasks);
+	assert.equal(densityMatrix.finalDensityViolations, 0);
+	assert.equal(densityMatrix.autoDensityViolations, 0);
 	process.stdout.write(`${JSON.stringify({
 		matrix: 'planner-design',
 		seed: `0x${MATRIX_SEED.toString(16)}`,
@@ -165,9 +175,122 @@ void test('runs a deterministic planner matrix across ten fixture classes', () =
 		plansGenerated,
 		maximumPages,
 		largerArtworkOmissions,
+		...densityMatrix,
 		runtimeMs: Math.round(performance.now() - startedAt),
 	})}\n`);
 });
+
+interface PureDensityFit {
+	bodyFontPoints: number;
+	pageCount: number;
+}
+
+function runDensityMonotonicityMatrix(
+	fixtures: readonly PlannerFixture[],
+	fieldMasks: readonly CardFieldVisibility[],
+): {
+	densityPairsChecked: number;
+	independentDensityViolations: number;
+	finalDensityViolations: number;
+	autoCompactSelections: number;
+	autoDensityViolations: number;
+} {
+	let densityPairsChecked = 0;
+	let independentDensityViolations = 0;
+	let finalDensityViolations = 0;
+	let autoCompactSelections = 0;
+	let autoDensityViolations = 0;
+	for (const theme of CARD_THEMES) {
+		for (const artworkSize of CARD_ARTWORK_SIZES) {
+			for (const fieldVisibility of fieldMasks) {
+				const standardDesign = normalizeCardDesignProfile({
+					theme, artworkSize, density: 'standard', fieldVisibility,
+				});
+				const compactDesign = normalizeCardDesignProfile({
+					theme, artworkSize, density: 'compact', fieldVisibility,
+				});
+				for (const fixture of fixtures) {
+					const standard = selectPureDensityFit(fixture, standardDesign);
+					const independentCompact = selectPureDensityFit(fixture, compactDesign);
+					if (!standard || !independentCompact) {
+						continue;
+					}
+					densityPairsChecked += 1;
+					if (independentCompact.bodyFontPoints > standard.bodyFontPoints) {
+						independentDensityViolations += 1;
+					}
+					const boundedCompact = selectPureDensityFit(
+						fixture,
+						compactDesign,
+						standard.bodyFontPoints,
+					);
+					if (!boundedCompact) {
+						continue;
+					}
+					if (boundedCompact.bodyFontPoints > standard.bodyFontPoints) {
+						finalDensityViolations += 1;
+					}
+					const auto = chooseAutoDensityCandidate(
+						{
+							...standard,
+							resolvedDensity: 'standard',
+							exportable: true,
+						},
+						{
+							...boundedCompact,
+							resolvedDensity: 'compact',
+							exportable: true,
+						},
+					);
+					if (auto.resolvedDensity === 'compact') {
+						autoCompactSelections += 1;
+						if (auto.bodyFontPoints > standard.bodyFontPoints) {
+							autoDensityViolations += 1;
+						}
+					}
+				}
+			}
+		}
+	}
+	return {
+		densityPairsChecked,
+		independentDensityViolations,
+		finalDensityViolations,
+		autoCompactSelections,
+		autoDensityViolations,
+	};
+}
+
+function selectPureDensityFit(
+	fixture: PlannerFixture,
+	design: CardDesignProfile,
+	standardBodyFontCeiling?: number,
+): PureDensityFit | undefined {
+	const candidates = design.density === 'compact'
+		? getMonotonicDensityBodyFontCandidates('compact', standardBodyFontCeiling)
+		: getAdaptiveBodyFontCandidates('standard');
+	let best: PureDensityFit | undefined;
+	for (const bodyFontPoints of candidates) {
+		const pages = planItemCardPages(fixture.item, {
+			design,
+			bodyFontPoints,
+			...(fixture.artworkOrientation
+				? { artworkOrientation: fixture.artworkOrientation }
+				: {}),
+		});
+		if (pages.some((page) => page.hasUnsplitOverflow)) {
+			continue;
+		}
+		const candidate = { bodyFontPoints, pageCount: pages.length };
+		if (!best
+			|| candidate.pageCount < best.pageCount
+			|| (candidate.pageCount === best.pageCount
+				&& candidate.bodyFontPoints > best.bodyFontPoints)) {
+			best = candidate;
+		}
+	}
+	return best;
+}
 
 interface PlannerFixture {
 	kind: string;

@@ -5,12 +5,16 @@ import {
 	chooseAutoDensityCandidate,
 	createCardDesignPlanningPolicy,
 	DENSITY_PLANNING_POLICIES,
+	getMonotonicDensityBodyFontCandidates,
 	PRINT_SAFE_MINIMUM_BODY_FONT_POINTS,
 	selectPreferredDensityBodyFontPoints,
 	shouldPreserveFittedArtwork,
 	type AutoDensityCandidate,
 } from '../src/renderer/card-design-policy';
-import { chooseArtworkPriorityFit } from '../src/renderer/item-card-fit-service';
+import {
+	chooseArtworkPriorityFit,
+	findBestAdaptiveBodyFit,
+} from '../src/renderer/item-card-fit-service';
 
 const baseDesign = {
 	theme: 'dark' as const,
@@ -88,4 +92,35 @@ void test('explicit densities stay explicit and Larger has a preserve-artwork po
 			?.value,
 		'artwork',
 	);
+});
+
+void test('Apparatus-style fitting caps Compact at the resolved Standard typography', async () => {
+	const measureApparatus = (points: number) => Promise.resolve({
+		pageCount: points <= 8 ? 1 : 2,
+		value: points,
+	});
+	const standard = await findBestAdaptiveBodyFit(
+		DENSITY_PLANNING_POLICIES.standard.bodyFontPoints,
+		measureApparatus,
+		1,
+	);
+	const independentCompact = await findBestAdaptiveBodyFit(
+		DENSITY_PLANNING_POLICIES.compact.bodyFontPoints,
+		() => Promise.resolve({ pageCount: 1, value: 'independent' }),
+		1,
+	);
+	assert.equal(standard?.bodyFontPoints, 8);
+	assert.equal(independentCompact?.bodyFontPoints, 9);
+	const boundedCandidates = getMonotonicDensityBodyFontCandidates(
+		'compact',
+		standard?.bodyFontPoints,
+	);
+	const boundedCompact = await findBestAdaptiveBodyFit(
+		boundedCandidates,
+		() => Promise.resolve({ pageCount: 1, value: 'bounded' }),
+		1,
+	);
+	assert.deepEqual(boundedCandidates, [8, 7.5, 7]);
+	assert.equal(boundedCompact?.bodyFontPoints, 8);
+	assert.ok((boundedCompact?.bodyFontPoints ?? 0) <= (standard?.bodyFontPoints ?? 0));
 });

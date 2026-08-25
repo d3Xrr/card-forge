@@ -51,6 +51,9 @@ void test('distinguishes output-relevant page, item, and semantic content change
 		mutatePlan(baseline, (pages) => { pages[0]!.showArtwork = false; }),
 		mutatePlan(baseline, (pages) => { pages[0]!.showStats = false; }),
 		mutatePlan(baseline, (pages) => { pages[0]!.statsPresentation = 'full'; }),
+		mutatePlan(baseline, (pages) => {
+			pages[0]!.compactStatRowSpans = ['full', 'full'];
+		}),
 		mutatePlan(baseline, (pages) => { pages[1]!.showSource = false; }),
 		mutatePlan(baseline, (pages) => { pages[0]!.artworkOrientation = 'square'; }),
 		mutatePlan(baseline, (pages) => { pages[0]!.title = 'Renamed item'; }),

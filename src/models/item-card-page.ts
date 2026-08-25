@@ -34,6 +34,7 @@ export interface MarkdownTableBlock {
 }
 
 export type ItemStatsPresentation = 'compact' | 'full';
+export type CompactStatRowSpan = 'half' | 'full';
 
 export type ItemCardPageKind = 'primary' | 'continuation' | 'crafting';
 
@@ -52,6 +53,8 @@ export interface ItemCardPage {
 	showArtwork: boolean;
 	showStats: boolean;
 	statsPresentation?: ItemStatsPresentation;
+	/** Canonical measured compact-stat packing used by both planner and renderer. */
+	compactStatRowSpans?: CompactStatRowSpan[];
 	showSource: boolean;
 	artworkOrientation?: ArtworkOrientation;
 	hasUnsplitOverflow: boolean;

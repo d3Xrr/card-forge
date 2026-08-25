@@ -3,7 +3,7 @@ import type { CardDesignProfile } from '../models/card-design';
 import { createVisualDesignFingerprint } from '../models/card-design';
 import { serializeItemCardPlanSignature } from '../renderer/item-card-plan-signature';
 
-export const CARD_RASTER_CACHE_REVISION = 'card-raster-v4-density-policy';
+export const CARD_RASTER_CACHE_REVISION = 'card-raster-v5-stat-packing';
 
 export interface CardRasterIdentityInput {
 	page: ItemCardPage;

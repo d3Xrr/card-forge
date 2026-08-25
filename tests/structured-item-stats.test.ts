@@ -11,6 +11,8 @@ import {
 	getCompactStatRowSpans,
 	hasMeaningfulItemStats,
 	isCompactAtomicStatValue,
+	isCompactStatCellWidthSafe,
+	promoteUnsafeCompactStatPairs,
 	selectCompactStatsLayout,
 } from '../src/renderer/structured-item-stats';
 
@@ -184,6 +186,88 @@ void test('hidden-field masks select a coherent adaptive compact-stat layout', (
 		estimateItemStatsLoad(item, 'compact', onlyDamage, 'image')
 			< estimateItemStatsLoad(item, 'compact', withoutProperties, 'image'),
 	);
+});
+
+void test('measured Scimitar-style widths promote an unsafe hidden-Properties pair', () => {
+	const item = createItem({
+		name: 'Scimitar-style weapon',
+		description: 'A concise weapon rule.',
+		damage: 'One-handed: 1d6 slashing',
+		properties: ['Finesse', 'Light'],
+		mastery: 'Nick',
+		weight: 3,
+	});
+	const design = normalizeCardDesignProfile({
+		theme: 'dark',
+		artworkSize: 'standard',
+		density: 'standard',
+		fieldVisibility: { properties: false },
+	});
+	const rows = buildItemStatRows(item, design);
+	const candidateSpans = getCompactStatRowSpans(rows);
+	const measuredSpans = promoteUnsafeCompactStatPairs(candidateSpans, [
+		{ requiredWidth: 268, availableWidth: 240 },
+		{ requiredWidth: 104, availableWidth: 240 },
+		{ requiredWidth: 96, availableWidth: 492 },
+	]);
+	assert.deepEqual(rows.map((row) => row.label), ['Damage', 'Mastery', 'Weight']);
+	assert.deepEqual(candidateSpans, ['half', 'half', 'full']);
+	assert.deepEqual(measuredSpans, ['full', 'full', 'full']);
+	const pages = planItemCardPages(item, {
+		design,
+		artworkOrientation: 'landscape',
+		compactStatRowSpans: measuredSpans,
+	});
+	assert.deepEqual(pages[0]?.compactStatRowSpans, measuredSpans);
+	assert.ok(
+		estimateItemStatsLoad(item, 'compact', design, 'image', measuredSpans)
+			> estimateItemStatsLoad(item, 'compact', design, 'image', candidateSpans),
+	);
+});
+
+void test('measured short stat values remain paired when both cells fit', () => {
+	const spans = promoteUnsafeCompactStatPairs(
+		['half', 'half'],
+		[
+			{ requiredWidth: 124, availableWidth: 240 },
+			{ requiredWidth: 104, availableWidth: 240 },
+		],
+	);
+	assert.deepEqual(spans, ['half', 'half']);
+	assert.equal(isCompactStatCellWidthSafe({ requiredWidth: 240, availableWidth: 240 }), true);
+});
+
+void test('long custom structured values use a full-width canonical plan', () => {
+	const item = createItem({
+		description: 'A concise custom weapon rule.',
+		damage: 'One-handed: 1d6 slashing while wielded in one hand',
+		mastery: 'Nick',
+	});
+	const rows = buildItemStatRows(item);
+	const spans = getCompactStatRowSpans(rows);
+	assert.deepEqual(spans, ['full', 'full']);
+	const pages = planItemCardPages(item, {
+		artworkOrientation: 'landscape',
+		compactStatRowSpans: spans,
+	});
+	assert.ok(pages.every((page) => !page.hasUnsplitOverflow));
+	assert.deepEqual(pages[0]?.compactStatRowSpans, spans);
+});
+
+void test('the same measured pair can fit a wide profile and fail a narrow one', () => {
+	const candidate = ['half', 'half'] as const;
+	const wide = promoteUnsafeCompactStatPairs(candidate, [
+		{ requiredWidth: 220, availableWidth: 240 },
+		{ requiredWidth: 110, availableWidth: 240 },
+	]);
+	const narrow = promoteUnsafeCompactStatPairs(candidate, [
+		{ requiredWidth: 220, availableWidth: 190 },
+		{ requiredWidth: 110, availableWidth: 190 },
+	]);
+	assert.deepEqual(wide, ['half', 'half']);
+	assert.deepEqual(narrow, ['full', 'full']);
+	assert.equal(selectCompactStatsLayout('compact', 'text'), 'grid');
+	assert.equal(selectCompactStatsLayout('compact', 'portrait'), 'stacked');
 });
 
 void test('promotes Scimitar metadata to labeled structured rows', () => {

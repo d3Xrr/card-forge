@@ -8,9 +8,9 @@ import {
 } from '../models/physical-card-profile';
 
 export const DEFAULT_PHYSICAL_PLAN_CACHE_CAPACITY = 128;
-export const PHYSICAL_PLAN_CACHE_SCHEMA_REVISION = 'physical-plan-cache-v4-density-policy';
-export const DEFAULT_PHYSICAL_PLAN_PLANNER_REVISION = 'item-card-planner-v6-design-policy';
-export const DEFAULT_PHYSICAL_PLAN_RENDERER_REVISION = 'item-card-renderer-css-v7-density-policy';
+export const PHYSICAL_PLAN_CACHE_SCHEMA_REVISION = 'physical-plan-cache-v5-stat-packing';
+export const DEFAULT_PHYSICAL_PLAN_PLANNER_REVISION = 'item-card-planner-v7-density-safety';
+export const DEFAULT_PHYSICAL_PLAN_RENDERER_REVISION = 'item-card-renderer-css-v8-stat-packing';
 export const EMPTY_PHYSICAL_PLAN_FINGERPRINT = 'none';
 
 export interface PhysicalPlanArtworkFingerprint {

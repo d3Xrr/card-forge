@@ -9,7 +9,11 @@ import {
 	type CardDesignProfile,
 	type ResolvedCardDensity,
 } from '../models/card-design';
-import type { ArtworkOrientation, ItemCardPage } from '../models/item-card-page';
+import type {
+	ArtworkOrientation,
+	CompactStatRowSpan,
+	ItemCardPage,
+} from '../models/item-card-page';
 import {
 	createCanonicalMeasurementRoot,
 	PHYSICAL_CARD_PROFILE,
@@ -17,9 +21,9 @@ import {
 import { ArtworkBoundsService } from './artwork-bounds';
 import { classifyArtworkOrientation } from './artwork-orientation';
 import { compactContinuationPages } from './item-card-compactor';
-import { getAdaptiveBodyFontCandidates } from './item-card-layout';
 import {
 	chooseAutoDensityCandidate,
+	getMonotonicDensityBodyFontCandidates,
 	shouldPreserveFittedArtwork,
 	withResolvedCardDensity,
 } from './card-design-policy';
@@ -32,6 +36,12 @@ import {
 	prepareItemCardPlanningContext,
 	type ItemCardPagePlanner,
 } from './item-card-planner';
+import {
+	buildItemStatRows,
+	getCompactStatRowSpans,
+	promoteUnsafeCompactStatPairs,
+	type CompactStatCellWidth,
+} from './structured-item-stats';
 import type { PlanningPerformanceTrace } from '../services/planning-performance';
 
 export interface FittedItemCardPlan {
@@ -114,12 +124,13 @@ interface MeasuredFit {
 
 interface PageMeasurementCache {
 	values: Map<string, Promise<boolean>>;
+	statPackingValues: Map<string, Promise<CompactStatRowSpan[] | undefined>>;
 	artworkFingerprint?: string;
 }
 
 const ARTWORK_SHARE_CANDIDATES = [undefined, 20, 16] as const;
 const MAXIMUM_ARTWORK_PAGE_PENALTY = 1;
-export const ITEM_CARD_MEASUREMENT_RENDER_REVISION = 'item-card-renderer-css-v6-density-policy';
+export const ITEM_CARD_MEASUREMENT_RENDER_REVISION = 'item-card-renderer-css-v7-stat-width';
 
 export class ItemCardFitService {
 	constructor(
@@ -136,43 +147,71 @@ export class ItemCardFitService {
 		designInput: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 	): Promise<FittedItemCardPlan> {
 		const design = normalizeCardDesignProfile(designInput);
-		if (design.density === 'auto') {
-			const standard = await this.fit(
+		if (design.density === 'standard') {
+			return this.fitResolved(
 				document,
 				item,
 				artworkResourcePath,
 				performanceTrace,
 				artworkFingerprint,
-				withResolvedCardDensity(design, 'standard'),
+				design,
 			);
-			if (standard.unfitPageIndexes.size === 0 && standard.pages.length <= 1) {
-				return standard;
-			}
-			const compact = await this.fit(
-				document,
-				item,
-				artworkResourcePath,
-				performanceTrace,
-				artworkFingerprint,
-				withResolvedCardDensity(design, 'compact'),
-			);
-			const selected = chooseAutoDensityCandidate(
-				{
-					plan: standard,
-					resolvedDensity: 'standard',
-					pageCount: standard.pages.length,
-					exportable: standard.unfitPageIndexes.size === 0,
-				},
-				{
-					plan: compact,
-					resolvedDensity: 'compact',
-					pageCount: compact.pages.length,
-					exportable: compact.unfitPageIndexes.size === 0,
-				},
-			);
-			return selected.plan;
 		}
-		const resolvedDensity = design.density;
+		const standard = await this.fitResolved(
+			document,
+			item,
+			artworkResourcePath,
+			performanceTrace,
+			artworkFingerprint,
+			withResolvedCardDensity(design, 'standard'),
+		);
+		if (design.density === 'auto'
+			&& standard.unfitPageIndexes.size === 0
+			&& standard.pages.length <= 1) {
+			return standard;
+		}
+		const compact = await this.fitResolved(
+			document,
+			item,
+			artworkResourcePath,
+			performanceTrace,
+			artworkFingerprint,
+			withResolvedCardDensity(design, 'compact'),
+			standard.bodyFontPoints,
+		);
+		if (design.density === 'compact') {
+			return compact;
+		}
+		const selected = chooseAutoDensityCandidate(
+			{
+				plan: standard,
+				resolvedDensity: 'standard',
+				pageCount: standard.pages.length,
+				exportable: standard.unfitPageIndexes.size === 0,
+			},
+			{
+				plan: compact,
+				resolvedDensity: 'compact',
+				pageCount: compact.pages.length,
+				exportable: compact.unfitPageIndexes.size === 0,
+			},
+		);
+		return selected.plan;
+	}
+
+	private async fitResolved(
+		document: Document,
+		item: ItemCardData,
+		artworkResourcePath: string | undefined,
+		performanceTrace: PlanningPerformanceTrace | undefined,
+		artworkFingerprint: string | undefined,
+		designInput: Readonly<CardDesignProfile>,
+		standardBodyFontCeiling?: number,
+	): Promise<FittedItemCardPlan> {
+		const design = normalizeCardDesignProfile(designInput);
+		const resolvedDensity: ResolvedCardDensity = design.density === 'compact'
+			? 'compact'
+			: 'standard';
 		const loadArtwork = () => loadArtworkOrientation(
 			document,
 			item,
@@ -190,11 +229,15 @@ export class ItemCardFitService {
 		let lastPlan: ItemCardPage[] = [];
 		let lastUnfitPageIndexes = new Set<number>();
 		let lastCapacityScale: number = ITEM_CARD_FIT_CAPACITY_SCALES[0];
-		let lastBodyFontPoints = getAdaptiveBodyFontCandidates(resolvedDensity).at(-1) ?? 7;
+		const bodyCandidates = getMonotonicDensityBodyFontCandidates(
+			resolvedDensity,
+			standardBodyFontCeiling,
+		);
+		let lastBodyFontPoints = bodyCandidates.at(-1) ?? 7;
 		try {
-			const bodyCandidates = getAdaptiveBodyFontCandidates(resolvedDensity);
 			const measurementCache: PageMeasurementCache = {
 				values: new Map(),
+				statPackingValues: new Map(),
 				...(artworkFingerprint ? { artworkFingerprint } : {}),
 			};
 			const planningContext = prepareItemCardPlanningContext(item, performanceTrace);
@@ -370,7 +413,7 @@ export class ItemCardFitService {
 			: [undefined];
 		for (const artworkSharePercent of artworkShares) {
 			for (const capacityScale of ITEM_CARD_FIT_CAPACITY_SCALES) {
-				const createCandidate = () => planPages({
+				const planningOptions = {
 					artworkOrientation,
 					artworkAvailable: showArtwork,
 					capacityScale,
@@ -378,11 +421,21 @@ export class ItemCardFitService {
 					...(artworkSharePercent !== undefined ? { artworkSharePercent } : {}),
 					...(performanceTrace ? { performanceTrace } : {}),
 					design: normalizeCardDesignProfile(design),
-				});
+				};
+				const createCandidate = () => planPages(planningOptions);
 				performanceTrace?.increment('candidatePlans');
-				const pages = performanceTrace
+				const initialPages = performanceTrace
 					? performanceTrace.measure('candidateGeneration', createCandidate)
 					: createCandidate();
+				const compactStatRowSpans = await this.resolveCompactStatRowPacking(
+					measurementRoot,
+					initialPages,
+					measurementCache,
+					design,
+				);
+				const pages = compactStatRowSpans
+					? planPages({ ...planningOptions, compactStatRowSpans })
+					: initialPages;
 				const measurementStartedAt = performanceNow();
 				const unfitPageIndexes = await this.measurePages(
 					measurementRoot,
@@ -439,6 +492,82 @@ export class ItemCardFitService {
 			}
 		}
 		return undefined;
+	}
+
+	private resolveCompactStatRowPacking(
+		measurementRoot: HTMLElement,
+		pages: readonly ItemCardPage[],
+		measurementCache: PageMeasurementCache,
+		design: Readonly<CardDesignProfile>,
+	): Promise<CompactStatRowSpan[] | undefined> {
+		const primary = pages.find((page) =>
+			page.kind === 'primary'
+			&& page.showStats
+			&& page.statsPresentation === 'compact',
+		);
+		if (!primary || primary.layout === 'portrait') {
+			return Promise.resolve(undefined);
+		}
+		const rows = buildItemStatRows(primary.item, design);
+		const candidateSpans = getCompactStatRowSpans(rows);
+		const key = JSON.stringify({
+			renderRevision: ITEM_CARD_MEASUREMENT_RENDER_REVISION,
+			layout: primary.layout,
+			resolvedDensity: primary.resolvedDensity ?? null,
+			artworkSharePercent: primary.artworkSharePercent ?? null,
+			rows,
+			candidateSpans,
+		});
+		let result = measurementCache.statPackingValues.get(key);
+		if (!result) {
+			result = this.measureCompactStatRowPacking(
+				measurementRoot,
+				primary,
+				candidateSpans,
+				design,
+			);
+			measurementCache.statPackingValues.set(key, result);
+			void result.catch(() => measurementCache.statPackingValues.delete(key));
+		}
+		return result;
+	}
+
+	private async measureCompactStatRowPacking(
+		measurementRoot: HTMLElement,
+		page: ItemCardPage,
+		candidateSpans: readonly CompactStatRowSpan[],
+		design: Readonly<CardDesignProfile>,
+	): Promise<CompactStatRowSpan[]> {
+		const host = measurementRoot.createDiv({
+			cls: 'ttrpg-card-forge__measurement-card',
+		});
+		try {
+			const rendered = this.renderer.render(
+				host,
+				{
+					...page,
+					blocks: [],
+					showArtwork: false,
+					showSource: false,
+					compactStatRowSpans: [...candidateSpans],
+				},
+				undefined,
+				undefined,
+				design,
+			);
+			await rendered.artworkReady;
+			await waitForLayout(measurementRoot.ownerDocument.defaultView);
+			const cells = Array.from(rendered.element.querySelectorAll<HTMLElement>(
+				'.ttrpg-card-forge-card__stats--compact > .ttrpg-card-forge-card__stat',
+			));
+			const widths: CompactStatCellWidth[] = candidateSpans.map((_, index) => ({
+				requiredWidth: cells[index]?.scrollWidth ?? Number.POSITIVE_INFINITY,
+				availableWidth: cells[index]?.clientWidth ?? 0,
+			}));
+			return promoteUnsafeCompactStatPairs(candidateSpans, widths);
+		} finally {
+			host.remove();
+		}
 	}
 
 	private async compactPages(
@@ -662,6 +791,7 @@ export function createItemCardPageMeasurementKey(
 		showArtwork: page.showArtwork,
 		showStats: page.showStats,
 		statsPresentation: page.statsPresentation ?? null,
+		compactStatRowSpans: page.compactStatRowSpans ?? null,
 		showSource: page.showSource,
 		artworkOrientation: page.artworkOrientation ?? null,
 		hasUnsplitOverflow: page.hasUnsplitOverflow,

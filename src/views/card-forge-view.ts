@@ -178,7 +178,7 @@ import {
 export const CARD_FORGE_VIEW_TYPE = 'ttrpg-card-forge-view';
 export const LAYOUT_UPDATE_STATUS_MESSAGE = 'Updating card layout…';
 export const LAYOUT_UPDATE_FEEDBACK_DELAY_MS = 150;
-const PHYSICAL_PLAN_RENDER_SETTINGS_FINGERPRINT = 'card-render-settings-v5-design-policy';
+const PHYSICAL_PLAN_RENDER_SETTINGS_FINGERPRINT = 'card-render-settings-v6-stat-packing';
 type WorkflowMode = 'queue' | 'saved-sets' | 'exports';
 
 interface PhysicalPlanLookup {

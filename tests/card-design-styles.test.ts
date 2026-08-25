@@ -6,6 +6,8 @@ const css = readFileSync('styles.css', 'utf8');
 const view = readFileSync('src/views/card-forge-view.ts', 'utf8');
 const settings = readFileSync('src/settings.ts', 'utf8');
 const main = readFileSync('src/main.ts', 'utf8');
+const fitService = readFileSync('src/renderer/item-card-fit-service.ts', 'utf8');
+const renderer = readFileSync('src/renderer/item-card-renderer.ts', 'utf8');
 
 void test('Design is a peer mode using the real responsive preview architecture', () => {
 	assert.match(view, /text: 'Preview'[\s\S]*text: 'Edit card'[\s\S]*text: 'Design'[\s\S]*text: 'Source note'/u);
@@ -57,6 +59,14 @@ void test('layout-update feedback is delayed, accessible, and preserves the old 
 	assert.match(view, /ttrpg-card-forge__layout-status[\s\S]*'aria-live':\s*'polite'/u);
 	assert.match(css, /preview\.is-layout-updating[^}]*scaled-card[^}]*opacity:\s*0\.88/isu);
 	assert.doesNotMatch(view, /Planning physical card pages/u);
+});
+
+void test('canonical fit owns measured stat packing and Compact typography ceiling', () => {
+	assert.match(fitService, /standard\.bodyFontPoints[\s\S]*fitResolved/u);
+	assert.match(fitService, /requiredWidth:\s*cells\[index\]\?\.scrollWidth/u);
+	assert.match(fitService, /availableWidth:\s*cells\[index\]\?\.clientWidth/u);
+	assert.match(fitService, /planPages\(\{\s*\.\.\.planningOptions,\s*compactStatRowSpans\s*\}\)/u);
+	assert.match(renderer, /renderItemStats\([\s\S]*page\.compactStatRowSpans/u);
 });
 
 void test('global defaults feed source, batch, and command adds without mutating queue snapshots', () => {

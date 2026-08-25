@@ -62,7 +62,7 @@ void test('representative list content retains its physical planning signature',
 		.update(serializeItemCardPlanSignature(pages))
 		.digest('hex');
 	assert.equal(pages.length, 1);
-	assert.equal(hash, '8ea9e633dd60f41117d4e1662e0cadb0d2e8699cf8e3a6595a7cc1da5cbe06f6');
+	assert.equal(hash, 'feab79f148e48b2b5d73810083d36d498f5b70b78a9604107edeea1f4b4d75af');
 });
 
 function getRule(css: string, selector: string): string {

@@ -164,7 +164,14 @@ export class ItemCardRenderer {
 		}
 
 		if (page.showStats && page.statsPresentation) {
-			renderItemStats(body, item, page.statsPresentation, layout, design);
+			renderItemStats(
+				body,
+				item,
+				page.statsPresentation,
+				layout,
+				design,
+				page.compactStatRowSpans,
+			);
 		}
 
 		const sourceDisplay = page.showSource
