@@ -42,18 +42,28 @@ void test('Light and Printer Friendly retain geometry while Printer Friendly red
 	}
 });
 
-void test('Compact changes bounded spacing without shrinking fonts or card geometry', () => {
+void test('Compact uses visibly tighter bounded typography without scaling card geometry', () => {
 	const compactRules = css.match(/\.ttrpg-card-forge-card\[data-density="compact"\][\s\S]*?(?=\n@container|$)/u)?.[0] ?? '';
 	assert.match(compactRules, /padding-block:/u);
 	assert.match(compactRules, /margin-block-end:/u);
+	assert.match(compactRules, /line-height:\s*1\.18/u);
 	assert.doesNotMatch(compactRules, /font-size:/u);
 	assert.doesNotMatch(compactRules, /transform:\s*scale/u);
+});
+
+void test('layout-update feedback is delayed, accessible, and preserves the old card', () => {
+	assert.match(view, /LAYOUT_UPDATE_STATUS_MESSAGE\s*=\s*'Updating card layout…'/u);
+	assert.match(view, /LAYOUT_UPDATE_FEEDBACK_DELAY_MS\s*=\s*150/u);
+	assert.match(view, /ttrpg-card-forge__layout-status[\s\S]*'aria-live':\s*'polite'/u);
+	assert.match(css, /preview\.is-layout-updating[^}]*scaled-card[^}]*opacity:\s*0\.88/isu);
+	assert.doesNotMatch(view, /Planning physical card pages/u);
 });
 
 void test('global defaults feed source, batch, and command adds without mutating queue snapshots', () => {
 	assert.match(settings, /defaultCardTheme:\s*'dark'/u);
 	assert.match(settings, /defaultArtworkSize:\s*'standard'/u);
 	assert.match(settings, /defaultCardDensity:\s*'standard'/u);
+	assert.match(settings, /standard:\s*'Standard',\s*compact:\s*'Compact',\s*auto:\s*'Auto'/u);
 	assert.match(settings, /dark:\s*'Dark'[\s\S]*light:\s*'Light'[\s\S]*'printer-friendly':\s*'Printer Friendly'/u);
 	assert.match(view, /getCurrentDraftDesign\(\)[\s\S]*createCardDesignProfile\(getCardDesignDefaults\(this\.getSettings\(\)\)\)/u);
 	assert.match(view, /addMany\([\s\S]*design:\s*createCardDesignProfile\(getCardDesignDefaults\(this\.getSettings\(\)\)\)/u);

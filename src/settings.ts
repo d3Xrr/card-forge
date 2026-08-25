@@ -131,7 +131,7 @@ export class CardForgeSettingTab extends PluginSettingTab {
 			.setName('Default information density')
 			.setDesc('Bounded spacing preset used for newly added cards.')
 			.addDropdown((dropdown) => dropdown
-				.addOptions({ standard: 'Standard', compact: 'Compact' })
+				.addOptions({ standard: 'Standard', compact: 'Compact', auto: 'Auto' })
 				.setValue(this.plugin.settings.defaultCardDensity)
 				.onChange(async (value) => {
 					await this.plugin.updateDefaultCardDensity(value as CardDensity);
@@ -229,7 +229,7 @@ export class CardForgeSettingTab extends PluginSettingTab {
 					type: 'dropdown',
 					key: 'defaultCardDensity',
 					defaultValue: DEFAULT_SETTINGS.defaultCardDensity,
-					options: { standard: 'Standard', compact: 'Compact' },
+					options: { standard: 'Standard', compact: 'Compact', auto: 'Auto' },
 				},
 			},
 			{

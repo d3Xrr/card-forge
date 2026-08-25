@@ -8,9 +8,10 @@ import type {
 	ItemCardPage,
 	MarkdownBlock,
 } from '../models/item-card-page';
+import type { ResolvedCardDensity } from '../models/card-design';
 import { PHYSICAL_CARD_PROFILE } from '../models/physical-card-profile';
 
-export const ITEM_CARD_PLAN_SIGNATURE_VERSION = 'item-card-plan-signature-v2';
+export const ITEM_CARD_PLAN_SIGNATURE_VERSION = 'item-card-plan-signature-v3-density';
 
 export interface HashedPlanText {
 	length: number;
@@ -34,6 +35,7 @@ export interface FittedItemCardPlanLike {
 	pages: readonly ItemCardPage[];
 	capacityScale: number;
 	bodyFontPoints: number;
+	resolvedDensity?: ResolvedCardDensity;
 	unfitPageIndexes: ReadonlySet<number>;
 	artworkResult: {
 		status: string;
@@ -45,6 +47,7 @@ export interface FittedItemCardPlanSignature {
 	plan: ItemCardPlanSignature;
 	capacityScale: number;
 	bodyFontPoints: number;
+	resolvedDensity: ResolvedCardDensity | null;
 	unfitPageIndexes: number[];
 	exportable: boolean;
 	artworkResult: {
@@ -62,6 +65,7 @@ export interface ItemCardPageSignature {
 	blocks: MarkdownBlockSignature[];
 	layout: ItemCardPage['layout'];
 	bodyFontPoints: number | null;
+	resolvedDensity: ResolvedCardDensity | null;
 	artworkSharePercent: number | null;
 	showArtwork: boolean;
 	showStats: boolean;
@@ -152,6 +156,7 @@ export function createFittedItemCardPlanSignature(
 		plan: createItemCardPlanSignature(plan.pages),
 		capacityScale: plan.capacityScale,
 		bodyFontPoints: plan.bodyFontPoints,
+		resolvedDensity: plan.resolvedDensity ?? plan.pages[0]?.resolvedDensity ?? null,
 		unfitPageIndexes,
 		exportable: unfitPageIndexes.length === 0,
 		artworkResult: {
@@ -177,6 +182,7 @@ function createPageSignature(page: ItemCardPage): ItemCardPageSignature {
 		blocks: page.blocks.map(createBlockSignature),
 		layout: page.layout,
 		bodyFontPoints: page.bodyFontPoints ?? null,
+		resolvedDensity: page.resolvedDensity ?? null,
 		artworkSharePercent: page.artworkSharePercent ?? null,
 		showArtwork: page.showArtwork,
 		showStats: page.showStats,

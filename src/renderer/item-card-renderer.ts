@@ -5,6 +5,7 @@ import {
 	normalizeCardDesignProfile,
 	type CardDesignProfile,
 } from '../models/card-design';
+import { resolvePlanningDensity } from './card-design-policy';
 import { ArtworkBoundsService } from './artwork-bounds';
 import {
 	classifyArtworkOrientation,
@@ -51,6 +52,8 @@ export class ItemCardRenderer {
 	): RenderedItemCard {
 		container.replaceChildren();
 		const design = normalizeCardDesignProfile(designInput);
+		const resolvedDensity = page.resolvedDensity
+			?? resolvePlanningDensity(design.density);
 		const { item, layout } = page;
 		const layoutProfile = getItemCardLayoutProfile(
 			layout,
@@ -64,7 +67,8 @@ export class ItemCardRenderer {
 		card.dataset.rarity = item.rarity ?? 'unknown';
 		card.dataset.theme = design.theme;
 		card.dataset.artworkSize = design.artworkSize;
-		card.dataset.density = design.density;
+		card.dataset.density = resolvedDensity;
+		card.dataset.densityPreference = design.density;
 		if (page.artworkOrientation) {
 			card.dataset.artworkOrientation = page.artworkOrientation;
 		}

@@ -69,6 +69,21 @@ void test('equivalent physical pages still reuse one raster identity', () => {
 	);
 });
 
+void test('resolved Auto density participates in completed raster identity', () => {
+	const standard = createPage({ rules: 'Auto density rules.' });
+	standard.resolvedDensity = 'standard';
+	const compact = { ...structuredClone(standard), resolvedDensity: 'compact' as const };
+	const design = {
+		theme: 'dark' as const,
+		artworkSize: 'standard' as const,
+		density: 'auto' as const,
+	};
+	assert.notEqual(
+		createRasterCacheKey({ page: standard, design }),
+		createRasterCacheKey({ page: compact, design }),
+	);
+});
+
 function createPage(input: {
 	name?: string;
 	rules?: string;

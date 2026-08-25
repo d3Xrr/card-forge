@@ -1,4 +1,5 @@
 import type { ItemCardData } from '../models/item';
+import type { CardDensity } from '../models/card-design';
 import type {
 	ArtworkOrientation,
 	ItemCardLayout,
@@ -7,6 +8,10 @@ import {
 	PRINT_TYPOGRAPHY,
 	printPointsToCardWidthCqw,
 } from './print-typography';
+import {
+	DENSITY_PLANNING_POLICIES,
+	selectPreferredDensityBodyFontPoints,
+} from './card-design-policy';
 
 export type { ItemCardLayout } from '../models/item-card-page';
 
@@ -19,13 +24,7 @@ export interface ItemCardLayoutProfile {
 export const MINIMUM_PRINT_BODY_FONT_POINTS = PRINT_TYPOGRAPHY.body.minimumPoints;
 
 export const ADAPTIVE_BODY_FONT_POINTS = Object.freeze([
-	10,
-	9.5,
-	9,
-	8.5,
-	8,
-	7.5,
-	7,
+	...DENSITY_PLANNING_POLICIES.standard.bodyFontPoints,
 ] as const);
 
 const LAYOUT_PROFILE_VALUES: Record<
@@ -132,8 +131,22 @@ export function selectPreferredBodyFontPoints(markdown: string): number {
 	return MINIMUM_PRINT_BODY_FONT_POINTS;
 }
 
-export function getAdaptiveBodyFontCandidates(): number[] {
-	return [...ADAPTIVE_BODY_FONT_POINTS];
+export function getAdaptiveBodyFontCandidates(
+	density: CardDensity = 'standard',
+): number[] {
+	return [...DENSITY_PLANNING_POLICIES[
+		density === 'compact' ? 'compact' : 'standard'
+	].bodyFontPoints];
+}
+
+export function selectDensityBodyFontPoints(
+	markdown: string,
+	density: CardDensity,
+): number {
+	return selectPreferredDensityBodyFontPoints(
+		selectPreferredBodyFontPoints(markdown),
+		density,
+	);
 }
 
 export function getItemCardLayoutProfile(

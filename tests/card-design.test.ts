@@ -59,6 +59,12 @@ void test('legacy and configured defaults reproduce the 0.6.1 design', () => {
 	);
 });
 
+void test('Auto is a bounded explicit density while legacy cards remain Standard', () => {
+	assert.equal(normalizeCardDesignProfile({ density: 'auto' }).density, 'auto');
+	assert.equal(LEGACY_CARD_DESIGN_PROFILE.density, 'standard');
+	assert.equal(createCardDesignProfile().density, 'standard');
+});
+
 void test('layout and visual fingerprints separate geometry from theme pixels', () => {
 	const dark = normalizeCardDesignProfile({
 		theme: 'dark', artworkSize: 'larger', density: 'compact',

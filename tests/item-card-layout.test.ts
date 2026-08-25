@@ -108,6 +108,8 @@ void test('selects comfortable defaults while retaining every legal adaptive bod
 		MINIMUM_PRINT_BODY_FONT_POINTS,
 	);
 	assert.deepEqual(getAdaptiveBodyFontCandidates(), [10, 9.5, 9, 8.5, 8, 7.5, 7]);
+	assert.deepEqual(getAdaptiveBodyFontCandidates('compact'), [9, 8.5, 8, 7.5, 7]);
+	assert.deepEqual(getAdaptiveBodyFontCandidates('auto'), [10, 9.5, 9, 8.5, 8, 7.5, 7]);
 });
 
 void test('adaptive fit tries every legal size and selects the largest size at the best page count', async () => {

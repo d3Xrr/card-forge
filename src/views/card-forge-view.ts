@@ -29,6 +29,7 @@ import {
 	createCardDesignProfile,
 	createLayoutDesignFingerprint,
 	isCardDesignFieldVisible,
+	LEGACY_CARD_DESIGN_PROFILE,
 	normalizeCardDesignProfile,
 	setCardDesignFieldVisibility,
 	type CardArtworkSize,
@@ -175,7 +176,9 @@ import {
 } from './workflow-modals';
 
 export const CARD_FORGE_VIEW_TYPE = 'ttrpg-card-forge-view';
-const PHYSICAL_PLAN_RENDER_SETTINGS_FINGERPRINT = 'card-render-settings-v4-design-system';
+export const LAYOUT_UPDATE_STATUS_MESSAGE = 'Updating card layout…';
+export const LAYOUT_UPDATE_FEEDBACK_DELAY_MS = 150;
+const PHYSICAL_PLAN_RENDER_SETTINGS_FINGERPRINT = 'card-render-settings-v5-design-policy';
 type WorkflowMode = 'queue' | 'saved-sets' | 'exports';
 
 interface PhysicalPlanLookup {
@@ -212,6 +215,7 @@ export class CardForgeView extends ItemView {
 	private resultsElement: HTMLElement | null = null;
 	private cardHostElement: HTMLElement | null = null;
 	private diagnosticsElement: HTMLElement | null = null;
+	private layoutStatusElement: HTMLElement | null = null;
 	private sourceNoteElement: HTMLElement | null = null;
 	private sourceNoteContentElement: HTMLElement | null = null;
 	private previewActionsElement: HTMLElement | null = null;
@@ -259,6 +263,7 @@ export class CardForgeView extends ItemView {
 	private previewGeneration = 0;
 	private queuePlanGeneration = 0;
 	private pageRenderGeneration = 0;
+	private layoutUpdateStatusTimer: number | null = null;
 	private readonly previewRequestGate = new LatestRequestGate<string>();
 	private readonly queueRequestGate = new LatestRequestGate<number>();
 	private previewPages: ItemCardPage[] = [];
@@ -286,7 +291,7 @@ export class CardForgeView extends ItemView {
 	private appliedDesign: CardDesignProfile | undefined;
 	private currentPreviewDesign: CardDesignProfile = normalizeCardDesignProfile(undefined);
 	private editingQueueEntryId: string | undefined;
-	private readonly editorPreviewDebounce = new DebouncedAction(350);
+	private readonly editorPreviewDebounce = new DebouncedAction(50);
 	private readonly temporaryArtworkOwner = `view-${createRuntimeId()}`;
 	private variantRulesNotice: VariantPreservationNotice | undefined;
 	private artworkLoadGeneration = 0;
@@ -510,6 +515,7 @@ export class CardForgeView extends ItemView {
 			window.cancelAnimationFrame(this.overflowFrame);
 		}
 		this.editorPreviewDebounce.cancel();
+		this.finishLayoutUpdateFeedback();
 		this.cardResizeObserver?.disconnect();
 		this.previewGeneration += 1;
 		this.queuePlanGeneration += 1;
@@ -685,6 +691,15 @@ export class CardForgeView extends ItemView {
 		this.designElement.hidden = true;
 		const previewRegion = previewContent.createDiv({ cls: 'ttrpg-card-forge__card-preview-region' });
 		const previewBlock = previewRegion.createDiv({ cls: 'ttrpg-card-forge__card-preview-block' });
+		this.layoutStatusElement = previewBlock.createDiv({
+			cls: 'ttrpg-card-forge__layout-status',
+			attr: {
+				role: 'status',
+				'aria-live': 'polite',
+				'aria-atomic': 'true',
+			},
+		});
+		this.layoutStatusElement.hidden = true;
 		this.cardHostElement = previewBlock.createDiv({ cls: 'ttrpg-card-forge__card-host' });
 		this.diagnosticsElement = previewBlock.createDiv({ cls: 'ttrpg-card-forge__diagnostics' });
 		this.sourceNoteElement = preview.createDiv({
@@ -1445,6 +1460,11 @@ export class CardForgeView extends ItemView {
 			this.rememberSourceNoteScroll();
 		}
 		this.previewMode = mode;
+		if (mode === 'source-note') {
+			this.previewGeneration += 1;
+			this.previewRequestGate.invalidate();
+			this.finishLayoutUpdateFeedback();
+		}
 		this.renderEditor();
 		if (mode === 'source-note') {
 			void this.renderSourceNote();
@@ -1460,6 +1480,7 @@ export class CardForgeView extends ItemView {
 		this.appliedDesign = undefined;
 		this.editingQueueEntryId = undefined;
 		this.editorPreviewDebounce.cancel();
+		this.finishLayoutUpdateFeedback();
 		this.artworkLoadGeneration += 1;
 		this.variantRulesNotice = undefined;
 		this.artworkEditorMode = undefined;
@@ -1727,13 +1748,15 @@ export class CardForgeView extends ItemView {
 			hidden: 'Hidden',
 		}, (artworkSize) => this.updateDesignDraft((draft) => {
 			draft.artworkSize = artworkSize;
-		}));
+		}), 'Larger prioritizes prominent artwork and may use additional card pages.');
 
 		this.appendDesignGroupHeading('Information');
 		this.appendDesignSelect<CardDensity>('Density', design.density, {
 			standard: 'Standard',
 			compact: 'Compact',
-		}, (density) => this.updateDesignDraft((draft) => { draft.density = density; }));
+			auto: 'Auto',
+		}, (density) => this.updateDesignDraft((draft) => { draft.density = density; }),
+		'Standard prioritizes normal print readability. Compact uses tighter print-safe typography. Auto uses Compact only when it reduces card pages.');
 
 		this.appendDesignGroupHeading('Fields');
 		const fields = [
@@ -1806,11 +1829,15 @@ export class CardForgeView extends ItemView {
 		value: T,
 		options: Readonly<Record<T, string>>,
 		onChange: (value: T) => void,
+		helpText?: string,
 	): void {
 		if (!this.designElement) {
 			return;
 		}
 		const row = this.designElement.createDiv({ cls: 'ttrpg-card-forge__design-select' });
+		if (helpText) {
+			row.setAttribute('title', helpText);
+		}
 		row.createEl('label', { text: label });
 		const select = row.createEl('select', { attr: { 'aria-label': label } });
 		for (const [optionValue, optionLabel] of Object.entries(options)) {
@@ -2204,7 +2231,6 @@ export class CardForgeView extends ItemView {
 	}
 
 	private scheduleEditorPreview(): void {
-		this.setEditorStatus('Updating preview…');
 		// Invalidate immediately so an older in-flight fit cannot commit during
 		// the debounce window. The last completed DOM remains visible.
 		this.previewGeneration += 1;
@@ -2213,6 +2239,45 @@ export class CardForgeView extends ItemView {
 		this.editorPreviewDebounce.schedule(() => {
 			this.renderPreview(true);
 		});
+	}
+
+	private beginLayoutUpdateFeedback(generation: number, immediate = false): void {
+		this.cancelLayoutUpdateStatusTimer();
+		const show = (): void => {
+			if (generation !== this.previewGeneration || !this.layoutStatusElement) {
+				return;
+			}
+			this.layoutStatusElement.setText(LAYOUT_UPDATE_STATUS_MESSAGE);
+			this.layoutStatusElement.hidden = false;
+			this.previewElement?.addClass('is-layout-updating');
+		};
+		if (immediate) {
+			show();
+			return;
+		}
+		this.layoutUpdateStatusTimer = window.setTimeout(() => {
+			this.layoutUpdateStatusTimer = null;
+			show();
+		}, LAYOUT_UPDATE_FEEDBACK_DELAY_MS);
+	}
+
+	private finishLayoutUpdateFeedback(generation?: number): void {
+		if (generation !== undefined && generation !== this.previewGeneration) {
+			return;
+		}
+		this.cancelLayoutUpdateStatusTimer();
+		if (this.layoutStatusElement) {
+			this.layoutStatusElement.hidden = true;
+			this.layoutStatusElement.setText('');
+		}
+		this.previewElement?.removeClass('is-layout-updating');
+	}
+
+	private cancelLayoutUpdateStatusTimer(): void {
+		if (this.layoutUpdateStatusTimer !== null) {
+			window.clearTimeout(this.layoutUpdateStatusTimer);
+			this.layoutUpdateStatusTimer = null;
+		}
 	}
 
 	private applyEditorChanges(): void {
@@ -2329,12 +2394,14 @@ export class CardForgeView extends ItemView {
 		this.addToQueueButton.disabled = !source;
 
 		if (!effective) {
+			this.finishLayoutUpdateFeedback(generation);
 			this.cardHostElement.createDiv({ cls: 'ttrpg-card-forge__preview-empty', text: 'Select an item to preview its card.' });
 			return;
 		}
 		const lookup = this.beginPhysicalPlanLookup(effective, design);
 		this.currentPreviewPlanKey = lookup.identity.key;
 		if (!lookup.indexIsCurrent || !lookup.promise) {
+			this.finishLayoutUpdateFeedback(generation);
 			if (!preserveExisting) {
 				this.cardHostElement.createDiv({
 					cls: 'ttrpg-card-forge__preview-empty',
@@ -2346,6 +2413,7 @@ export class CardForgeView extends ItemView {
 		}
 		const requestToken = this.previewRequestGate.begin(lookup.identity.key);
 		if (lookup.completed) {
+			this.finishLayoutUpdateFeedback(generation);
 			this.applyPhysicalPlanToPreview(
 				effective.item,
 				lookup,
@@ -2356,9 +2424,15 @@ export class CardForgeView extends ItemView {
 			return;
 		}
 		if (!preserveExisting) {
-			this.cardHostElement.createDiv({ cls: 'ttrpg-card-forge__preview-empty', text: 'Planning physical card pages…' });
+			this.finishLayoutUpdateFeedback(generation);
+			this.cardHostElement.createDiv({
+				cls: 'ttrpg-card-forge__preview-empty',
+				text: LAYOUT_UPDATE_STATUS_MESSAGE,
+				attr: { role: 'status', 'aria-live': 'polite' },
+			});
+		} else {
+			this.beginLayoutUpdateFeedback(generation);
 		}
-		this.setEditorStatus('Updating preview…');
 		void this.planAndRenderPreview(effective.item, lookup, generation, requestToken);
 	}
 
@@ -2512,6 +2586,7 @@ export class CardForgeView extends ItemView {
 				&& this.previewRequestGate.isCurrent(requestToken)
 				&& this.cardHostElement
 			) {
+				this.finishLayoutUpdateFeedback(generation);
 				this.currentPreviewPlanKey = undefined;
 				if (this.previewPages.length > 0) {
 					this.setEditorStatus('Preview update failed; showing the last valid card.');
@@ -2546,6 +2621,7 @@ export class CardForgeView extends ItemView {
 			this.currentPageIndex,
 			Math.max(0, plan.pages.length - 1),
 		);
+		this.finishLayoutUpdateFeedback(generation);
 		this.setEditorStatus('');
 		this.renderCurrentPage();
 	}
@@ -2951,7 +3027,7 @@ export class CardForgeView extends ItemView {
 
 	private renderQueuePlanningState(
 		entryCount: number,
-		message = 'Planning physical cards…',
+		message = LAYOUT_UPDATE_STATUS_MESSAGE,
 	): void {
 		if (!this.queueListElement || !this.queueSummaryElement) {
 			return;
@@ -3387,7 +3463,14 @@ export class CardForgeView extends ItemView {
 				`${page.pageCount} physical ${page.pageCount === 1 ? 'card' : 'cards'}`,
 				...(page.pageCount > 1 ? [`Page ${page.pageIndex + 1}/${page.pageCount}`] : []),
 				`Layout: ${formatLayoutName(renderedCard.layout)}`,
-				formatArtworkDiagnostic(page, artworkResourcePath, artworkResult),
+				formatDensityDiagnostic(page, this.currentPreviewDesign),
+				formatArtworkDiagnostic(
+					page,
+					artworkResourcePath,
+					artworkResult,
+					this.currentPreviewDesign,
+					this.previewPages.some((plannedPage) => plannedPage.showArtwork),
+				),
 				hasOverflow ? `Does not fit at ${renderedCard.printFontPoints.toFixed(1)} pt` : 'Fits canonical 750 × 1050 px',
 			];
 			this.diagnosticsElement.empty();
@@ -3517,12 +3600,22 @@ function formatArtworkDiagnostic(
 	page: ItemCardPage,
 	artworkResourcePath?: string,
 	artworkResult?: ArtworkLoadResult,
+	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
+	artworkPreserved = page.showArtwork,
 ): string {
 	if (!page.item.imagePath) {
 		return 'No artwork';
 	}
 	if (!page.showArtwork) {
-		return 'Artwork omitted';
+		if (artworkPreserved) {
+			return 'Artwork on primary card';
+		}
+		if (design.artworkSize === 'hidden') {
+			return 'Artwork hidden by design';
+		}
+		return design.artworkSize === 'larger'
+			? 'Artwork could not fit safely'
+			: 'Artwork omitted to preserve printable layout';
 	}
 	if (!artworkResourcePath || artworkResult?.status === 'error') {
 		return 'Artwork unavailable';
@@ -3533,7 +3626,20 @@ function formatArtworkDiagnostic(
 	if (artworkResult?.status === 'invalid-dimensions') {
 		return 'Artwork dimensions unavailable';
 	}
-	return artworkResult?.status === 'not-rendered' ? 'Artwork omitted' : 'Artwork: loading';
+	return artworkResult?.status === 'not-rendered'
+		? 'Artwork could not fit safely'
+		: 'Artwork: loading';
+}
+
+function formatDensityDiagnostic(
+	page: ItemCardPage,
+	design: Readonly<CardDesignProfile>,
+): string {
+	const resolved = page.resolvedDensity
+		?? (design.density === 'compact' ? 'compact' : 'standard');
+	return design.density === 'auto'
+		? `Density: ${humanizeSlug(resolved)} (Auto)`
+		: `Density: ${humanizeSlug(resolved)}`;
 }
 
 function humanizeSlug(value: string): string {

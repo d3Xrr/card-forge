@@ -9,8 +9,9 @@ export type CardTheme = typeof CARD_THEMES[number];
 export const CARD_ARTWORK_SIZES = ['standard', 'larger', 'minimal', 'hidden'] as const;
 export type CardArtworkSize = typeof CARD_ARTWORK_SIZES[number];
 
-export const CARD_DENSITIES = ['standard', 'compact'] as const;
+export const CARD_DENSITIES = ['standard', 'compact', 'auto'] as const;
 export type CardDensity = typeof CARD_DENSITIES[number];
+export type ResolvedCardDensity = Exclude<CardDensity, 'auto'>;
 
 export const CARD_DESIGN_FIELDS = [
 	'damage',

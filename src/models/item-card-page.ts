@@ -1,4 +1,5 @@
 import type { ItemCardData } from './item';
+import type { ResolvedCardDensity } from './card-design';
 
 export type ArtworkOrientation = 'portrait' | 'landscape' | 'square';
 
@@ -45,6 +46,8 @@ export interface ItemCardPage {
 	blocks: MarkdownBlock[];
 	layout: ItemCardLayout;
 	bodyFontPoints?: number;
+	/** Concrete density selected once for the entire logical card. */
+	resolvedDensity?: ResolvedCardDensity;
 	artworkSharePercent?: number;
 	showArtwork: boolean;
 	showStats: boolean;

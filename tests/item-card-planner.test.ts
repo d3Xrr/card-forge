@@ -249,6 +249,32 @@ void test('plans one source-bearing page for a short item', () => {
 	assert.equal(pages[0]?.showSource, true);
 });
 
+void test('explicit density is resolved once across primary, continuation, and Crafting pages', () => {
+	const description = [
+		...Array.from(
+			{ length: 18 },
+			(_, index) => `Rule ${index + 1} describes a bounded effect with enough detail to wrap.`,
+		),
+		'## Crafting',
+		...Array.from(
+			{ length: 8 },
+			(_, index) => `- Component ${index + 1} requires careful preparation.`,
+		),
+	].join('\n\n');
+	const standard = planItemCardPages(createItem({ description }), {
+		design: { theme: 'dark', artworkSize: 'larger', density: 'standard' },
+		artworkOrientation: 'landscape',
+	});
+	const compact = planItemCardPages(createItem({ description }), {
+		design: { theme: 'dark', artworkSize: 'larger', density: 'compact' },
+		artworkOrientation: 'landscape',
+	});
+	assert.ok(standard.every((page) => page.resolvedDensity === 'standard'));
+	assert.ok(compact.every((page) => page.resolvedDensity === 'compact'));
+	assert.ok(compact.every((page) => (page.bodyFontPoints ?? 0) >= 7));
+	assert.ok(compact.length <= standard.length);
+});
+
 void test('plans multiple continuation pages for long rules text', () => {
 	const description = Array.from(
 		{ length: 36 },

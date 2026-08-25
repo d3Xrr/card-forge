@@ -8,6 +8,7 @@ import {
 	buildItemStatRows,
 	estimateItemStatsLoad,
 	formatItemWeight,
+	getCompactStatRowSpans,
 	hasMeaningfulItemStats,
 	isCompactAtomicStatValue,
 	selectCompactStatsLayout,
@@ -134,6 +135,55 @@ void test('bounded design visibility can force inherited Cost and hide independe
 	]);
 	const pages = planItemCardPages(item, { design });
 	assert.equal(pages.at(-1)?.showSource, false);
+});
+
+void test('hidden-field masks select a coherent adaptive compact-stat layout', () => {
+	const item = createItem({
+		description: 'A concise weapon rule.',
+		damage: '1d8 slashing',
+		properties: ['Finesse', 'Light'],
+		mastery: 'Nick',
+		range: '20/60',
+		weight: 3,
+		cost: '25 gp',
+	});
+	const allRows = buildItemStatRows(item);
+	assert.equal(selectCompactStatsLayout('compact', 'image'), 'grid');
+	assert.deepEqual(getCompactStatRowSpans(allRows), [
+		'full', 'full', 'half', 'half', 'half', 'half',
+	]);
+
+	const withoutProperties = normalizeCardDesignProfile({
+		theme: 'dark',
+		artworkSize: 'standard',
+		density: 'standard',
+		fieldVisibility: { properties: false, cost: false },
+	});
+	const packedRows = buildItemStatRows(item, withoutProperties);
+	assert.deepEqual(packedRows.map((row) => row.label), [
+		'Damage', 'Mastery', 'Range', 'Weight',
+	]);
+	assert.equal(selectCompactStatsLayout('compact', 'image'), 'grid');
+	assert.deepEqual(getCompactStatRowSpans(packedRows), ['half', 'half', 'half', 'half']);
+
+	const onlyDamage = normalizeCardDesignProfile({
+		...withoutProperties,
+		fieldVisibility: {
+			damage: true,
+			properties: false,
+			mastery: false,
+			range: false,
+			weight: false,
+			cost: false,
+		},
+	});
+	const singleRow = buildItemStatRows(item, onlyDamage);
+	assert.deepEqual(singleRow.map((row) => row.label), ['Damage']);
+	assert.deepEqual(getCompactStatRowSpans(singleRow), ['full']);
+	assert.ok(
+		estimateItemStatsLoad(item, 'compact', onlyDamage, 'image')
+			< estimateItemStatsLoad(item, 'compact', withoutProperties, 'image'),
+	);
 });
 
 void test('promotes Scimitar metadata to labeled structured rows', () => {

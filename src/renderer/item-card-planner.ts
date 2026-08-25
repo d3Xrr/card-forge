@@ -16,9 +16,13 @@ import type { ArtworkOrientation } from './artwork-orientation';
 import {
 	estimateDescriptionLoad,
 	selectItemCardLayout,
-	selectPreferredBodyFontPoints,
+	selectDensityBodyFontPoints,
 	type ItemCardLayout,
 } from './item-card-layout';
+import {
+	getDensityPlanningPolicy,
+	resolvePlanningDensity,
+} from './card-design-policy';
 import {
 	cloneMarkdownBlock,
 	parseSemanticMarkdown,
@@ -153,7 +157,10 @@ function createItemCardPlanOptionsKey(
 		artworkAvailable: options.artworkAvailable ?? item.hasImage,
 		capacityScale: clampCapacityScale(options.capacityScale ?? 1),
 		bodyFontPoints: clampBodyFontPoints(
-			options.bodyFontPoints ?? selectPreferredBodyFontPoints(item.description),
+			options.bodyFontPoints ?? selectDensityBodyFontPoints(
+				item.description,
+				normalizeCardDesignProfile(options.design).density,
+			),
 		),
 		artworkSharePercent: options.artworkSharePercent ?? null,
 		layoutDesignFingerprint: createLayoutDesignFingerprint(options.design),
@@ -169,7 +176,10 @@ export function planPreparedItemCardPages(
 		return planManualCardSegments(item, context, options);
 	}
 	const design = normalizeCardDesignProfile(options.design);
-	const densityCapacityMultiplier = design.density === 'compact' ? 1.12 : 1;
+	const resolvedDensity = resolvePlanningDensity(design.density);
+	const densityCapacityMultiplier = getDensityPlanningPolicy(
+		resolvedDensity,
+	).capacityMultiplier;
 	const capacityScale = clampCapacityScale(options.capacityScale ?? 1)
 		* densityCapacityMultiplier;
 	const { allBlocks, sections } = context;
@@ -184,7 +194,10 @@ export function planPreparedItemCardPages(
 	);
 	const statsPresentation = getStrategyStatsPresentation(strategy);
 	const bodyFontPoints = clampBodyFontPoints(
-		options.bodyFontPoints ?? selectPreferredBodyFontPoints(item.description),
+		options.bodyFontPoints ?? selectDensityBodyFontPoints(
+			item.description,
+			resolvedDensity,
+		),
 	);
 	const typographyCapacityScale = 7 / bodyFontPoints;
 	const primaryLayout = selectPlannerPrimaryLayout(
@@ -203,7 +216,7 @@ export function planPreparedItemCardPages(
 	const primaryContentCapacity = Math.max(
 		1,
 		primaryCapacity - (statsPresentation
-			? estimateItemStatsLoad(item, statsPresentation, design)
+			? estimateItemStatsLoad(item, statsPresentation, design, primaryLayout)
 			: 0),
 	);
 	const continuationCapacity = MINIMUM_BODY_CAPACITIES.continuation
@@ -276,6 +289,7 @@ export function planPreparedItemCardPages(
 		blocks: page.blocks,
 		layout: page.layout,
 		bodyFontPoints: page.bodyFontPoints,
+		resolvedDensity,
 		...(page.artworkSharePercent !== undefined
 			? { artworkSharePercent: page.artworkSharePercent }
 			: {}),
@@ -308,10 +322,16 @@ function planManualCardSegments(
 		options,
 	);
 	const bodyFontPoints = clampBodyFontPoints(
-		options.bodyFontPoints ?? selectPreferredBodyFontPoints(item.description),
+		options.bodyFontPoints ?? selectDensityBodyFontPoints(
+			item.description,
+			normalizeCardDesignProfile(options.design).density,
+		),
 	);
 	const design = normalizeCardDesignProfile(options.design);
-	const densityCapacityMultiplier = design.density === 'compact' ? 1.12 : 1;
+	const resolvedDensity = resolvePlanningDensity(design.density);
+	const densityCapacityMultiplier = getDensityPlanningPolicy(
+		resolvedDensity,
+	).capacityMultiplier;
 	const continuationCapacity = MINIMUM_BODY_CAPACITIES.continuation
 		* (7 / bodyFontPoints)
 		* clampCapacityScale(options.capacityScale ?? 1)
@@ -336,6 +356,7 @@ function planManualCardSegments(
 				blocks: page.blocks,
 				layout: 'text',
 				bodyFontPoints,
+				resolvedDensity,
 				showArtwork: false,
 				showStats: false,
 				showSource: false,
@@ -355,6 +376,7 @@ function planManualCardSegments(
 		pageCount: combined.length,
 		showSource: pageIndex === combined.length - 1
 			&& isCardDesignFieldVisible(item, 'source', design),
+		resolvedDensity,
 	}));
 }
 

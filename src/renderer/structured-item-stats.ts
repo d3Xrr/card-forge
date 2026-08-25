@@ -28,6 +28,7 @@ export interface ItemStatRow {
 }
 
 export type CompactStatsLayout = 'grid' | 'stacked';
+export type CompactStatRowSpan = 'half' | 'full';
 
 const COMPACT_ATOMIC_VALUE_MAX_LENGTH = 26;
 
@@ -123,11 +124,17 @@ export function estimateItemStatsLoad(
 	item: ItemCardData,
 	presentation: ItemStatsPresentation,
 	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
+	cardLayout: ItemCardLayout = 'text',
 ): number {
 	if (presentation === 'compact') {
 		const rows = buildItemStatRows(item, design);
-		const rowUnits = rows.reduce((total, row) =>
-			total + (row.label === 'Properties' || row.values.length > 1 ? 1 : 0.5), 0);
+		if (selectCompactStatsLayout(presentation, cardLayout) === 'stacked') {
+			return rows.length * 1.15;
+		}
+		const rowUnits = getCompactStatRowSpans(rows).reduce(
+			(total, span) => total + (span === 'full' ? 1 : 0.5),
+			0,
+		);
 		return rowUnits * 1.15;
 	}
 	return buildItemStatRows(item, design).reduce(
@@ -143,7 +150,11 @@ export function renderItemStats(
 	cardLayout: ItemCardLayout,
 	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 ): void {
+	const rows = buildItemStatRows(item, design);
 	const compactLayout = selectCompactStatsLayout(presentation, cardLayout);
+	const compactRowSpans = presentation === 'compact' && compactLayout === 'grid'
+		? getCompactStatRowSpans(rows)
+		: [];
 	const stats = container.createDiv({
 		cls: [
 			'ttrpg-card-forge-card__stats',
@@ -151,10 +162,12 @@ export function renderItemStats(
 			...(compactLayout ? [`ttrpg-card-forge-card__stats--${compactLayout}`] : []),
 		].join(' '),
 	});
-	for (const row of buildItemStatRows(item, design)) {
+	stats.dataset.rowCount = String(rows.length);
+	for (const [index, row] of rows.entries()) {
 		const stat = stats.createDiv({ cls: 'ttrpg-card-forge-card__stat' });
 		stat.dataset.stat = row.label.toLocaleLowerCase();
 		stat.toggleClass('is-multiline', row.values.length > 1);
+		stat.toggleClass('is-full-width', compactRowSpans[index] === 'full');
 		stat.createDiv({ cls: 'ttrpg-card-forge-card__stat-label', text: row.label });
 		const values = stat.createDiv({ cls: 'ttrpg-card-forge-card__stat-values' });
 		for (const value of row.values) {
@@ -177,7 +190,42 @@ export function selectCompactStatsLayout(
 	if (presentation !== 'compact') {
 		return undefined;
 	}
-	return cardLayout === 'portrait' ? 'stacked' : 'grid';
+	if (cardLayout === 'portrait') {
+		return 'stacked';
+	}
+	return 'grid';
+}
+
+/** Greedily pairs short rows and promotes unpaired/wide rows to full width. */
+export function getCompactStatRowSpans(
+	rows: readonly ItemStatRow[],
+): CompactStatRowSpan[] {
+	const spans = rows.map<CompactStatRowSpan>(() => 'half');
+	let pendingHalfIndex: number | undefined;
+	for (const [index, row] of rows.entries()) {
+		const wide = row.label === 'Properties'
+			|| row.values.length > 1
+			|| row.values.some(
+				(value) => value.trim().length > COMPACT_ATOMIC_VALUE_MAX_LENGTH,
+			);
+		if (wide) {
+			if (pendingHalfIndex !== undefined) {
+				spans[pendingHalfIndex] = 'full';
+				pendingHalfIndex = undefined;
+			}
+			spans[index] = 'full';
+			continue;
+		}
+		if (pendingHalfIndex === undefined) {
+			pendingHalfIndex = index;
+		} else {
+			pendingHalfIndex = undefined;
+		}
+	}
+	if (pendingHalfIndex !== undefined) {
+		spans[pendingHalfIndex] = 'full';
+	}
+	return spans;
 }
 
 export function isCompactAtomicStatValue(label: string, value: string): boolean {
