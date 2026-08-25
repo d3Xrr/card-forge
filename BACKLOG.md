@@ -11,7 +11,11 @@ This file tracks completed workflow milestones and intentionally deferred work.
 - Added scoped physical-card theme tokens. Dark retains the 0.6.1 appearance, Light uses a readable light surface, and Printer Friendly uses white, low-ink surfaces with grayscale-readable hierarchy.
 - Added planner-owned artwork allocations: Larger uses 56% image, 42% portrait, or 36% compact allocation; Minimal uses 16% image/compact or the safe 28% portrait column; Hidden retains the artwork selection while removing it from layout.
 - Added bounded visibility overrides for Damage, Two-handed damage, Properties, Mastery, Range, Weight, Cost, and Source. Semantic automatic provenance remains authoritative, including inherited Cost hidden until explicitly force-shown.
-- Added Compact as a measured spacing-only density preset. It reduces non-identity rhythm without font scaling, and every candidate still passes the canonical 750 × 1050 overflow measurement.
+- Strengthened Compact into a visibly distinct, measured density preset capped at 9 pt with tighter bounded rhythm and the shared 7 pt print-safe floor. Added explicit Auto density, which deterministically selects Compact only when it safely reduces physical pages and resolves once per logical card.
+- Stabilized compact structured-stat packing around the actual visible row set. Short rows pair in the two-column grid, unpaired or wide rows become full-width, portrait rows stack, and hidden fields consume no planned space.
+- Made Larger artwork a strong planner preference: safe continuation pages now take priority over artwork omission, while genuine non-splittable/measurement failures retain the hard printable-layout fallback and a clear diagnostic.
+- Added delayed, accessible **Updating card layout…** feedback for non-trivial replanning while retaining the previous valid preview and existing stale-result gates.
+- Added an exhaustive pure design-profile matrix and a deterministic ten-fixture planner stress matrix covering density, artwork, field masks, themes, continuation, Crafting, tables, and manual breaks.
 - Split design identity into layout and visual fingerprints: artwork, fields, and density replan; theme-only changes reuse physical pages and rerasterize.
 - Persisted independent design snapshots through queue add, batch add, current-item commands, Duplicate, restart, active Saved Set dirty comparison, Saved Set Save/Load, mixed A4 preview, and PDF export.
 - Kept the existing missing temporary-artwork export block even when artwork presentation is Hidden; changing that lifecycle rule remains outside this presentation phase.
@@ -34,6 +38,8 @@ This file tracks completed workflow milestones and intentionally deferred work.
 - **0.7.0 — Card Presentation / Design System.** Intended scope: a Design tab; Dark, Light, and Printer Friendly presets; Standard, Larger, Minimal, and Hidden artwork sizing; bounded field visibility; and safe information-density presets. This work must avoid arbitrary CSS customization and preserve planner/fitting guarantees.
 - **0.8.0 — Duplex / card backs / printer calibration.**
 - **0.9.x — Print and workflow quality-of-life.**
+
+Post-0.9 work may include the final responsive workspace polish after the print workflow is stable.
 
 Potential **1.0** remains the stable complete CLI item-to-physical-card workflow with finalized front/back design and printing. Generic platform work may remain post-1.0.
 
@@ -86,6 +92,8 @@ Measure Card Forge resource use while the plugin is enabled and its view is not 
 
 - Duplex printing and card backs.
 - Additional bounded presentation presets only after real physical-card testing.
+- Bounded artwork framing controls (Fit/Fill, zoom, position, or focal point) as a front-design follow-up. Framing changes the image **inside** the fixed planner-owned artwork box, should normally affect raster/visual identity only, and must not alter physical-plan geometry. Battleaxe-style portrait framing is a useful positive reference; the Wand of the Precocious Apprentice demonstrates why a larger box alone does not guarantee a larger perceived subject.
+- Final responsive workspace polish after 0.9; preserve the accepted 0.6.1 responsive architecture until then.
 - Generic Markdown input and parser work.
 - A manual custom-card creator.
 - Additional card types, including spells, feats, conditions, and monster or NPC cards.

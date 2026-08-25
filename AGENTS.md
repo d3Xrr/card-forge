@@ -75,6 +75,13 @@ PDF code must never own or reproduce item-content pagination. It consumes comple
 - Preview and export must use canonical physical page planning, never visible pane dimensions.
 - Crop marks remain outside the exact card rectangles. Phase 3 has no bleed.
 
+The bounded density policy uses the existing 10 pt target and 7 pt absolute
+print-safe body-text floor. Standard retains the enumerated 10–7 pt adaptive
+steps. Compact is capped at 9 pt, uses the same 7 pt floor, and tightens only
+bounded body/section/stat rhythm. Auto may resolve once per logical card to
+Standard or Compact; it must never create an intermediate density or mix
+densities across continuation/Crafting pages.
+
 Centralize these values in the physical profile and A4 geometry modules. Do not scatter print magic numbers.
 
 ## Safety and data rules
@@ -97,12 +104,17 @@ Centralize these values in the physical profile and A4 geometry modules. Do not 
 npm install       # install dependencies
 npm run dev       # esbuild watch mode
 npm test          # pure unit and PDF-structure tests
+npm run test:design-matrix # exhaustive pure profiles + deterministic planner stress matrix
 npm run lint      # ESLint plus Obsidian plugin rules
 npm run build     # strict TypeScript check and production bundle
 npm run deploy    # production build, then copy three release artifacts
 ```
 
-Before handing off a change, run tests, lint, and build. For Phase 3 changes, also run `npm run deploy` when the configured development vault exists and confirm only `main.js`, `manifest.json`, and `styles.css` are copied. Compare the configured source-item folder before and after work.
+Before handing off a design-system change, run tests, the design matrix, lint,
+and build. For Phase 3 changes, also run `npm run deploy` when the configured
+development vault exists and confirm only `main.js`, `manifest.json`, and
+`styles.css` are copied. Compare the configured source-item folder before and
+after work.
 
 ## Releases
 
