@@ -1,13 +1,16 @@
 import type { ItemCardPage } from '../models/item-card-page';
+import type { CardDesignProfile } from '../models/card-design';
+import { createVisualDesignFingerprint } from '../models/card-design';
 import { serializeItemCardPlanSignature } from '../renderer/item-card-plan-signature';
 
-export const CARD_RASTER_CACHE_REVISION = 'card-raster-v2';
+export const CARD_RASTER_CACHE_REVISION = 'card-raster-v3-design';
 
 export interface CardRasterIdentityInput {
 	page: ItemCardPage;
 	physicalPlanKey?: string;
 	artworkResourcePath?: string;
 	artworkRevisionFingerprint?: string;
+	design?: CardDesignProfile;
 }
 
 /**
@@ -21,6 +24,7 @@ export function createRasterCacheKey(input: CardRasterIdentityInput): string {
 		revision: CARD_RASTER_CACHE_REVISION,
 		physicalPlanKey: input.physicalPlanKey ?? null,
 		pageSignature: serializeItemCardPlanSignature([input.page]),
+		visualDesignFingerprint: createVisualDesignFingerprint(input.design),
 		artwork: {
 			resourcePath: input.artworkResourcePath ?? null,
 			revisionFingerprint: input.artworkRevisionFingerprint ?? null,

@@ -25,6 +25,7 @@ void test('builds a canonical key from every physical planning input slot', () =
 		'rendererRevision',
 		'renderSettingsFingerprint',
 		'overrideFingerprint',
+		'layoutDesignFingerprint',
 	]);
 	assert.deepEqual(Object.keys(parsed.item as object), [
 		'filePath',
@@ -83,6 +84,7 @@ void test('builds a canonical key from every physical planning input slot', () =
 		{ ...input, rendererRevision: 'renderer-2' },
 		{ ...input, renderSettingsFingerprint: 'settings-2' },
 		{ ...input, overrideFingerprint: 'override-2' },
+		{ ...input, layoutDesignFingerprint: 'design-layout-2' },
 	];
 	for (const variant of variants) {
 		assert.notEqual(createPhysicalPlanCacheKey(variant), key);

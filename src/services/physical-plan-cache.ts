@@ -8,9 +8,9 @@ import {
 } from '../models/physical-card-profile';
 
 export const DEFAULT_PHYSICAL_PLAN_CACHE_CAPACITY = 128;
-export const PHYSICAL_PLAN_CACHE_SCHEMA_REVISION = 'physical-plan-cache-v2';
-export const DEFAULT_PHYSICAL_PLAN_PLANNER_REVISION = 'item-card-planner-v4-field-provenance';
-export const DEFAULT_PHYSICAL_PLAN_RENDERER_REVISION = 'item-card-renderer-css-v5';
+export const PHYSICAL_PLAN_CACHE_SCHEMA_REVISION = 'physical-plan-cache-v3-design-layout';
+export const DEFAULT_PHYSICAL_PLAN_PLANNER_REVISION = 'item-card-planner-v5-card-design';
+export const DEFAULT_PHYSICAL_PLAN_RENDERER_REVISION = 'item-card-renderer-css-v6-design-system';
 export const EMPTY_PHYSICAL_PLAN_FINGERPRINT = 'none';
 
 export interface PhysicalPlanArtworkFingerprint {
@@ -29,6 +29,7 @@ export interface PhysicalPlanCacheKeyInput {
 	rendererRevision?: string;
 	renderSettingsFingerprint?: string;
 	overrideFingerprint?: string;
+	layoutDesignFingerprint?: string;
 }
 
 export interface PhysicalPlanCacheIdentity {
@@ -86,6 +87,8 @@ export function createPhysicalPlanCacheKey(
 		renderSettingsFingerprint: input.renderSettingsFingerprint
 			?? EMPTY_PHYSICAL_PLAN_FINGERPRINT,
 		overrideFingerprint: input.overrideFingerprint
+			?? EMPTY_PHYSICAL_PLAN_FINGERPRINT,
+		layoutDesignFingerprint: input.layoutDesignFingerprint
 			?? EMPTY_PHYSICAL_PLAN_FINGERPRINT,
 	});
 }

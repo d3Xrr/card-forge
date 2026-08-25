@@ -39,14 +39,16 @@ export interface PreviewStatusChip {
 export interface PreviewModeState {
 	previewActive: boolean;
 	editActive: boolean;
+	designActive: boolean;
 	sourceActive: boolean;
 	showCard: boolean;
 	showEditor: boolean;
+	showDesign: boolean;
 	showSourceNote: boolean;
 	showGlobalPreviewActions: boolean;
 }
 
-export type PreviewMode = 'preview' | 'edit' | 'source-note';
+export type PreviewMode = 'preview' | 'edit' | 'design' | 'source-note';
 
 export function createVariantPreservationNotice(
 	variantLabel: string,
@@ -127,9 +129,11 @@ export function createPreviewModeState(mode: PreviewMode): PreviewModeState {
 	return {
 		previewActive: mode === 'preview',
 		editActive: mode === 'edit',
+		designActive: mode === 'design',
 		sourceActive: mode === 'source-note',
 		showCard: mode !== 'source-note',
 		showEditor: mode === 'edit',
+		showDesign: mode === 'design',
 		showSourceNote: mode === 'source-note',
 		showGlobalPreviewActions: mode === 'preview',
 	};

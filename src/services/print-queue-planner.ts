@@ -1,6 +1,8 @@
 import type { ItemCardData } from '../models/item';
 import type { ItemCardPage } from '../models/item-card-page';
 import type { PrintQueueEntry } from '../models/print-queue';
+import type { CardDesignProfile } from '../models/card-design';
+import { normalizeCardDesignProfile } from '../models/card-design';
 import { A4_CARDS_PER_SHEET } from '../export/a4-sheet-geometry';
 
 export interface PhysicalItemPlan {
@@ -15,6 +17,7 @@ export interface PhysicalItemPlan {
 
 export interface ResolvedPrintQueueEntry {
 	entry: PrintQueueEntry;
+	design: CardDesignProfile;
 	item?: ItemCardData;
 	pages: readonly ItemCardPage[];
 	unfitPageIndexes: ReadonlySet<number>;
@@ -33,6 +36,7 @@ export interface PhysicalQueueCard {
 	copyIndex: number;
 	pageIndex: number;
 	page: ItemCardPage;
+	design: CardDesignProfile;
 	artworkResourcePath?: string;
 	artworkRevisionFingerprint?: string;
 }
@@ -57,6 +61,7 @@ export function resolvePrintQueue(
 		const item = plan?.item ?? sourceItem;
 		return {
 			entry,
+			design: normalizeCardDesignProfile(entry.design),
 			...(item ? { item } : {}),
 			pages: item && plan ? plan.pages : [],
 			unfitPageIndexes: item && plan ? plan.unfitPageIndexes : new Set<number>(),
@@ -95,6 +100,7 @@ export function flattenPrintQueue(
 					copyIndex,
 					pageIndex: page.pageIndex,
 					page,
+					design: normalizeCardDesignProfile(resolved.design),
 					...(resolved.artworkResourcePath
 						? { artworkResourcePath: resolved.artworkResourcePath }
 						: {}),

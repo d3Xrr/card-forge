@@ -1,4 +1,5 @@
 import type { ItemCardData } from '../models/item';
+import type { CardDesignProfile } from '../models/card-design';
 import type { PrintQueueEntry, PrintQueueService } from '../models/print-queue';
 
 export interface ActiveVaultFileIdentity {
@@ -20,6 +21,7 @@ export function resolveCurrentIndexedItem(
 export function addCurrentIndexedItemToQueue(
 	queue: PrintQueueService,
 	item: ItemCardData,
+	design?: CardDesignProfile,
 ): PrintQueueEntry {
-	return queue.add(item.filePath);
+	return queue.add(item.filePath, undefined, design);
 }

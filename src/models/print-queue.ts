@@ -1,4 +1,10 @@
 import type { CardOverrides } from './card-overrides';
+import type { CardDesignProfile } from './card-design';
+import {
+	areCardDesignProfilesEqual,
+	cloneCardDesignProfile,
+	normalizeCardDesignProfile,
+} from './card-design';
 import {
 	areCardOverridesEqual,
 	normalizeCardOverrides,
@@ -8,6 +14,8 @@ export interface PrintQueueEntrySnapshot {
 	filePath: string;
 	quantity: number;
 	overrides?: CardOverrides;
+	/** Resolved design snapshot. Missing means the stable pre-0.7.0 legacy profile. */
+	design?: CardDesignProfile;
 	/** Preserve an intentionally separate logical entry even when its printable state matches another. */
 	separate?: true;
 }
@@ -26,6 +34,7 @@ export interface PrintQueueHydrationResult {
 export interface PrintQueueAddInput {
 	filePath: string;
 	overrides?: CardOverrides;
+	design?: CardDesignProfile;
 }
 
 export interface PrintQueueBatchAddResult {
@@ -58,8 +67,12 @@ export class PrintQueueService {
 		return () => this.listeners.delete(listener);
 	}
 
-	add(filePath: string, overrides?: CardOverrides): PrintQueueEntry {
-		const entry = this.addWithoutEmitting(filePath, overrides);
+	add(
+		filePath: string,
+		overrides?: CardOverrides,
+		design?: CardDesignProfile,
+	): PrintQueueEntry {
+		const entry = this.addWithoutEmitting(filePath, overrides, design);
 		this.emit();
 		return entry;
 	}
@@ -72,7 +85,11 @@ export class PrintQueueService {
 				rejected += 1;
 				continue;
 			}
-			entries.push(this.addWithoutEmitting(input.filePath, input.overrides));
+			entries.push(this.addWithoutEmitting(
+				input.filePath,
+				input.overrides,
+				input.design,
+			));
 		}
 		if (entries.length > 0) {
 			this.emit();
@@ -80,13 +97,21 @@ export class PrintQueueService {
 		return { entries, rejected };
 	}
 
-	private addWithoutEmitting(filePath: string, overrides?: CardOverrides): PrintQueueEntry {
+	private addWithoutEmitting(
+		filePath: string,
+		overrides?: CardOverrides,
+		design?: CardDesignProfile,
+	): PrintQueueEntry {
 		const normalizedPath = filePath.trim();
 		const normalizedOverrides = normalizeCardOverrides(overrides);
+		const normalizedDesign = design
+			? normalizeCardDesignProfile(design)
+			: undefined;
 		const existing = this.entries.find((entry) =>
 			!entry.separate
 			&& entry.filePath === normalizedPath
-			&& areCardOverridesEqual(entry.overrides, normalizedOverrides));
+			&& areCardOverridesEqual(entry.overrides, normalizedOverrides)
+			&& areCardDesignProfilesEqual(entry.design, normalizedDesign));
 		if (existing) {
 			existing.quantity += 1;
 			return existing;
@@ -100,6 +125,7 @@ export class PrintQueueService {
 			filePath: normalizedPath,
 			quantity: 1,
 			...(normalizedOverrides ? { overrides: normalizedOverrides } : {}),
+			...(normalizedDesign ? { design: normalizedDesign } : {}),
 		};
 		this.entries.push(entry);
 		return entry;
@@ -159,6 +185,42 @@ export class PrintQueueService {
 		} else {
 			delete entry.overrides;
 		}
+		this.emit();
+		return true;
+	}
+
+	/** Atomically persists the content and design halves of one editor draft. */
+	updateCard(
+		id: string,
+		overrides: CardOverrides | undefined,
+		design: CardDesignProfile,
+	): boolean {
+		const entry = this.getEntry(id);
+		if (!entry) {
+			return false;
+		}
+		const normalizedOverrides = normalizeCardOverrides(overrides);
+		const normalizedDesign = normalizeCardDesignProfile(design);
+		if (normalizedOverrides) {
+			entry.overrides = normalizedOverrides;
+		} else {
+			delete entry.overrides;
+		}
+		entry.design = normalizedDesign;
+		this.emit();
+		return true;
+	}
+
+	updateDesign(id: string, design: CardDesignProfile): boolean {
+		const entry = this.getEntry(id);
+		if (!entry) {
+			return false;
+		}
+		const normalized = normalizeCardDesignProfile(design);
+		if (areCardDesignProfilesEqual(entry.design, normalized)) {
+			return true;
+		}
+		entry.design = normalized;
 		this.emit();
 		return true;
 	}
@@ -271,6 +333,7 @@ export function createPrintQueueEntrySnapshot(
 		filePath: entry.filePath,
 		quantity: entry.quantity,
 		...(entry.overrides ? { overrides: structuredClone(entry.overrides) } : {}),
+		...(entry.design ? { design: cloneCardDesignProfile(entry.design) } : {}),
 		...(entry.separate ? { separate: true as const } : {}),
 	};
 }
@@ -324,7 +387,8 @@ export function hydratePrintQueue(
 			: entries.find((entry) =>
 				!entry.separate
 				&& entry.filePath === snapshot.filePath
-				&& areCardOverridesEqual(entry.overrides, snapshot.overrides));
+				&& areCardOverridesEqual(entry.overrides, snapshot.overrides)
+				&& areCardDesignProfilesEqual(entry.design, snapshot.design));
 		if (existing) {
 			existing.quantity += snapshot.quantity;
 			repaired = true;
@@ -360,15 +424,20 @@ function parsePrintQueueEntrySnapshot(value: unknown): {
 		return { repaired: true };
 	}
 	const overrides = normalizeCardOverrides(value.overrides);
+	const design = isRecord(value.design)
+		? normalizeCardDesignProfile(value.design)
+		: undefined;
 	return {
 		snapshot: {
 			filePath,
 			quantity,
 			...(overrides ? { overrides } : {}),
+			...(design ? { design } : {}),
 			...(value.separate === true ? { separate: true as const } : {}),
 		},
 		repaired: value.quantity === undefined
-			|| (value.separate !== undefined && value.separate !== true),
+			|| (value.separate !== undefined && value.separate !== true)
+			|| (value.design !== undefined && !isRecord(value.design)),
 	};
 }
 

@@ -9,8 +9,16 @@ import type { ItemCardData } from './models/item';
 import {
 	DEFAULT_SETTINGS,
 	CardForgeSettingTab,
+	getCardDesignDefaults,
 	type CardForgeSettings,
 } from './settings';
+import {
+	createCardDesignProfile,
+	normalizeCardDesignProfile,
+	type CardArtworkSize,
+	type CardDensity,
+	type CardTheme,
+} from './models/card-design';
 import { CARD_FORGE_VIEW_TYPE, CardForgeView } from './views/card-forge-view';
 import { PlanningPerformanceMonitor } from './services/planning-performance';
 import type { FittedItemCardPlan } from './renderer/item-card-fit-service';
@@ -273,7 +281,11 @@ export default class TTRPGCardForgePlugin extends Plugin {
 			new Notice('Current note is not an indexed Card Forge item.');
 			return;
 		}
-		addCurrentIndexedItemToQueue(this.printQueue, item);
+		addCurrentIndexedItemToQueue(
+			this.printQueue,
+			item,
+			createCardDesignProfile(getCardDesignDefaults(this.settings)),
+		);
 		new Notice(`Added ${item.name} to Card Forge print queue.`);
 	}
 
@@ -320,6 +332,33 @@ export default class TTRPGCardForgePlugin extends Plugin {
 	async updateOpenPdfAfterExport(openPdfAfterExport: boolean): Promise<void> {
 		this.settings.openPdfAfterExport = openPdfAfterExport;
 		await this.persistPluginData();
+	}
+
+	async updateDefaultCardTheme(defaultCardTheme: CardTheme): Promise<void> {
+		this.settings.defaultCardTheme = normalizeCardDesignProfile({
+			...createCardDesignProfile(getCardDesignDefaults(this.settings)),
+			theme: defaultCardTheme,
+		}).theme;
+		await this.persistPluginData();
+		this.notifyDesignDefaultsChanged();
+	}
+
+	async updateDefaultArtworkSize(defaultArtworkSize: CardArtworkSize): Promise<void> {
+		this.settings.defaultArtworkSize = normalizeCardDesignProfile({
+			...createCardDesignProfile(getCardDesignDefaults(this.settings)),
+			artworkSize: defaultArtworkSize,
+		}).artworkSize;
+		await this.persistPluginData();
+		this.notifyDesignDefaultsChanged();
+	}
+
+	async updateDefaultCardDensity(defaultCardDensity: CardDensity): Promise<void> {
+		this.settings.defaultCardDensity = normalizeCardDesignProfile({
+			...createCardDesignProfile(getCardDesignDefaults(this.settings)),
+			density: defaultCardDensity,
+		}).density;
+		await this.persistPluginData();
+		this.notifyDesignDefaultsChanged();
 	}
 
 	async rebuildItemIndex(): Promise<ItemIndexResult> {
@@ -417,6 +456,11 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		const saved = await this.loadData() as (
 			Partial<CardForgeSettings> & LoadedPluginData
 		) | null;
+		const savedDesignDefaults = normalizeCardDesignProfile({
+			theme: saved?.defaultCardTheme,
+			artworkSize: saved?.defaultArtworkSize,
+			density: saved?.defaultCardDensity,
+		});
 		this.settings = {
 			itemFolder: typeof saved?.itemFolder === 'string'
 				? saved.itemFolder
@@ -433,12 +477,23 @@ export default class TTRPGCardForgePlugin extends Plugin {
 			openPdfAfterExport: typeof saved?.openPdfAfterExport === 'boolean'
 				? saved.openPdfAfterExport
 				: DEFAULT_SETTINGS.openPdfAfterExport,
+			defaultCardTheme: savedDesignDefaults.theme,
+			defaultArtworkSize: savedDesignDefaults.artworkSize,
+			defaultCardDensity: savedDesignDefaults.density,
 		};
 		return {
 			printQueue: saved?.printQueue,
 			savedPrintSets: saved?.savedPrintSets,
 			activeSavedSetId: saved?.activeSavedSetId,
 		};
+	}
+
+	private notifyDesignDefaultsChanged(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(CARD_FORGE_VIEW_TYPE)) {
+			if (leaf.view instanceof CardForgeView) {
+				leaf.view.onDesignDefaultsChanged();
+			}
+		}
 	}
 
 	private persistPluginData(): Promise<void> {

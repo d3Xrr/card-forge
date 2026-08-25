@@ -10,6 +10,7 @@ import {
 	planItemCardPages,
 	planPreparedItemCardPages,
 	prepareItemCardPlanningContext,
+	resolveArtworkSharePercent,
 	selectItemCardContentStrategy,
 } from '../src/renderer/item-card-planner';
 import { serializeItemCardPlanSignature } from '../src/renderer/item-card-plan-signature';
@@ -34,6 +35,34 @@ function createItem(overrides: Partial<ItemCardData> = {}): ItemCardData {
 		...overrides,
 	};
 }
+
+void test('artwork presentation presets use planner-owned allocations', () => {
+	assert.equal(resolveArtworkSharePercent('image', 'standard'), undefined);
+	assert.equal(resolveArtworkSharePercent('image', 'larger'), 56);
+	assert.equal(resolveArtworkSharePercent('portrait', 'larger'), 42);
+	assert.equal(resolveArtworkSharePercent('compact', 'larger'), 36);
+	assert.equal(resolveArtworkSharePercent('image', 'minimal'), 16);
+	assert.equal(resolveArtworkSharePercent('portrait', 'minimal'), 28);
+	assert.equal(resolveArtworkSharePercent('image', 'hidden'), undefined);
+
+	const larger = planItemCardPages(createItem(), {
+		artworkOrientation: 'landscape',
+		design: { theme: 'dark', artworkSize: 'larger', density: 'standard' },
+	});
+	assert.equal(larger[0]?.showArtwork, true);
+	assert.equal(larger[0]?.artworkSharePercent, 56);
+	const minimal = planItemCardPages(createItem(), {
+		artworkOrientation: 'landscape',
+		design: { theme: 'dark', artworkSize: 'minimal', density: 'standard' },
+	});
+	assert.equal(minimal[0]?.artworkSharePercent, 16);
+	const hidden = planItemCardPages(createItem(), {
+		artworkOrientation: 'landscape',
+		design: { theme: 'dark', artworkSize: 'hidden', density: 'standard' },
+	});
+	assert.equal(hidden[0]?.showArtwork, false);
+	assert.equal(hidden[0]?.layout, 'text');
+});
 
 void test('extracts semantic paragraphs, headings, and lists', () => {
 	const blocks = parseSemanticMarkdown([

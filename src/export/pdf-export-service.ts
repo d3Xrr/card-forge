@@ -82,6 +82,7 @@ export class PdfExportService {
 				...(artworkRevisionFingerprint
 					? { artworkRevisionFingerprint }
 					: {}),
+				design: card.design,
 			});
 			let pngBytes = rasterCache.get(cacheKey);
 			if (!pngBytes) {
@@ -90,6 +91,7 @@ export class PdfExportService {
 					card.page,
 					artworkResourcePath,
 					artworkRevisionFingerprint,
+					card.design,
 				);
 				rasterCache.set(cacheKey, pngBytes);
 			}

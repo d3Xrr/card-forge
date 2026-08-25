@@ -2,6 +2,10 @@ import { toPng } from 'html-to-image';
 
 import type { ItemCardPage } from '../models/item-card-page';
 import {
+	normalizeCardDesignProfile,
+	type CardDesignProfile,
+} from '../models/card-design';
+import {
 	applyCanonicalCardSize,
 	PHYSICAL_CARD_PROFILE,
 } from '../models/physical-card-profile';
@@ -15,7 +19,9 @@ export class CardRasterizer {
 		page: ItemCardPage,
 		artworkResourcePath?: string,
 		artworkRevisionFingerprint?: string,
+		designInput?: Readonly<CardDesignProfile>,
 	): Promise<Uint8Array> {
+		const design = normalizeCardDesignProfile(designInput);
 		const root = document.body.createDiv({ cls: 'ttrpg-card-forge__export-root' });
 		root.setAttribute('aria-hidden', 'true');
 		const host = root.createDiv({ cls: 'ttrpg-card-forge__export-card' });
@@ -27,6 +33,7 @@ export class CardRasterizer {
 				page,
 				artworkResourcePath,
 				artworkRevisionFingerprint,
+				design,
 			);
 			await rendered.artworkReady;
 			await document.fonts?.ready;
@@ -40,7 +47,7 @@ export class CardRasterizer {
 				cacheBust: false,
 				skipAutoScale: true,
 				skipFonts: true,
-				backgroundColor: '#0d0e10',
+				backgroundColor: design.theme === 'dark' ? '#0d0e10' : '#ffffff',
 				style: {
 					width: `${PHYSICAL_CARD_PROFILE.widthPx}px`,
 					height: `${PHYSICAL_CARD_PROFILE.heightPx}px`,

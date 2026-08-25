@@ -19,13 +19,13 @@ void test('preview toolbar retains stable left, center, and right zones', () => 
 	assert.match(status, /justify-self:\s*end/iu);
 });
 
-void test('narrow three-mode toolbar keeps pagination discoverable without overflow', () => {
+void test('narrow four-mode toolbar keeps pagination discoverable without overflow', () => {
 	const css = readFileSync('styles.css', 'utf8');
 	const view = readFileSync('src/views/card-forge-view.ts', 'utf8');
 	const narrowStart = css.indexOf('@container ttrpg-card-forge (max-width: 420px)');
 	assert.ok(narrowStart >= 0);
 	const narrow = css.slice(narrowStart);
-	assert.match(view, /text: 'Preview'[\s\S]*text: 'Edit card'[\s\S]*text: 'Source note'/u);
+	assert.match(view, /text: 'Preview'[\s\S]*text: 'Edit card'[\s\S]*text: 'Design'[\s\S]*text: 'Source note'/u);
 	assert.match(narrow, /preview-toolbar[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/isu);
 	assert.match(narrow, /mode-toggle[^}]*width:\s*100%/isu);
 	assert.match(narrow, /preview-indicator[^}]*grid-column:\s*1/isu);

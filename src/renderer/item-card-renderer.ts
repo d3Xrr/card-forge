@@ -1,5 +1,10 @@
 import type { ItemCardData } from '../models/item';
 import type { ItemCardPage } from '../models/item-card-page';
+import {
+	LEGACY_CARD_DESIGN_PROFILE,
+	normalizeCardDesignProfile,
+	type CardDesignProfile,
+} from '../models/card-design';
 import { ArtworkBoundsService } from './artwork-bounds';
 import {
 	classifyArtworkOrientation,
@@ -42,8 +47,10 @@ export class ItemCardRenderer {
 		page: ItemCardPage,
 		artworkResourcePath?: string,
 		artworkRevisionFingerprint?: string,
+		designInput: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 	): RenderedItemCard {
 		container.replaceChildren();
+		const design = normalizeCardDesignProfile(designInput);
 		const { item, layout } = page;
 		const layoutProfile = getItemCardLayoutProfile(
 			layout,
@@ -55,6 +62,9 @@ export class ItemCardRenderer {
 		card.dataset.layout = layout;
 		card.dataset.pageKind = page.kind;
 		card.dataset.rarity = item.rarity ?? 'unknown';
+		card.dataset.theme = design.theme;
+		card.dataset.artworkSize = design.artworkSize;
+		card.dataset.density = design.density;
 		if (page.artworkOrientation) {
 			card.dataset.artworkOrientation = page.artworkOrientation;
 		}
@@ -150,7 +160,7 @@ export class ItemCardRenderer {
 		}
 
 		if (page.showStats && page.statsPresentation) {
-			renderItemStats(body, item, page.statsPresentation, layout);
+			renderItemStats(body, item, page.statsPresentation, layout, design);
 		}
 
 		const sourceDisplay = page.showSource

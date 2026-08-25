@@ -132,27 +132,44 @@ void test('preview toolbar chips are concise UI state and do not enter override 
 	assert.deepEqual(createPreviewModeState('preview'), {
 		previewActive: true,
 		editActive: false,
+		designActive: false,
 		sourceActive: false,
 		showCard: true,
 		showEditor: false,
+		showDesign: false,
 		showSourceNote: false,
 		showGlobalPreviewActions: true,
 	});
 	assert.deepEqual(createPreviewModeState('edit'), {
 		previewActive: false,
 		editActive: true,
+		designActive: false,
 		sourceActive: false,
 		showCard: true,
 		showEditor: true,
+		showDesign: false,
+		showSourceNote: false,
+		showGlobalPreviewActions: false,
+	});
+	assert.deepEqual(createPreviewModeState('design'), {
+		previewActive: false,
+		editActive: false,
+		designActive: true,
+		sourceActive: false,
+		showCard: true,
+		showEditor: false,
+		showDesign: true,
 		showSourceNote: false,
 		showGlobalPreviewActions: false,
 	});
 	assert.deepEqual(createPreviewModeState('source-note'), {
 		previewActive: false,
 		editActive: false,
+		designActive: false,
 		sourceActive: true,
 		showCard: false,
 		showEditor: false,
+		showDesign: false,
 		showSourceNote: true,
 		showGlobalPreviewActions: false,
 	});

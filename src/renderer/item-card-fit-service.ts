@@ -2,6 +2,12 @@ import {
 	createStructuredItemFieldOriginsSnapshot,
 	type ItemCardData,
 } from '../models/item';
+import {
+	createLayoutDesignFingerprint,
+	LEGACY_CARD_DESIGN_PROFILE,
+	normalizeCardDesignProfile,
+	type CardDesignProfile,
+} from '../models/card-design';
 import type { ArtworkOrientation, ItemCardPage } from '../models/item-card-page';
 import {
 	createCanonicalMeasurementRoot,
@@ -106,7 +112,7 @@ interface PageMeasurementCache {
 
 const ARTWORK_SHARE_CANDIDATES = [undefined, 20, 16] as const;
 const MAXIMUM_ARTWORK_PAGE_PENALTY = 1;
-export const ITEM_CARD_MEASUREMENT_RENDER_REVISION = 'item-card-renderer-css-v4';
+export const ITEM_CARD_MEASUREMENT_RENDER_REVISION = 'item-card-renderer-css-v5-design';
 
 export class ItemCardFitService {
 	constructor(
@@ -120,11 +126,13 @@ export class ItemCardFitService {
 		artworkResourcePath?: string,
 		performanceTrace?: PlanningPerformanceTrace,
 		artworkFingerprint = artworkResourcePath,
+		designInput: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 	): Promise<FittedItemCardPlan> {
+		const design = normalizeCardDesignProfile(designInput);
 		const loadArtwork = () => loadArtworkOrientation(
 			document,
 			item,
-			artworkResourcePath,
+			design.artworkSize === 'hidden' ? undefined : artworkResourcePath,
 			this.artworkBounds,
 			artworkFingerprint,
 		);
@@ -160,6 +168,7 @@ export class ItemCardFitService {
 					bodyCandidates,
 					artworkOrientation,
 					performanceTrace,
+					design,
 				);
 				const minimumWithArtwork = artworkAvailable
 					? getMinimumPlannedPageCount(
@@ -168,6 +177,7 @@ export class ItemCardFitService {
 						bodyCandidates,
 						artworkOrientation,
 						performanceTrace,
+						design,
 					)
 					: Number.POSITIVE_INFINITY;
 				return { minimumWithoutArtwork, minimumWithArtwork };
@@ -187,6 +197,7 @@ export class ItemCardFitService {
 					measurementCache,
 					onMeasured,
 					performanceTrace,
+					design,
 				)
 				: undefined;
 			if (withArtwork
@@ -199,6 +210,7 @@ export class ItemCardFitService {
 					measurementCache,
 					artworkResult,
 					performanceTrace,
+					design,
 				);
 				return finalized;
 			}
@@ -214,6 +226,7 @@ export class ItemCardFitService {
 				measurementCache,
 				onMeasured,
 				performanceTrace,
+				design,
 			);
 			const selected = chooseArtworkPriorityFit(
 				withArtwork,
@@ -228,6 +241,7 @@ export class ItemCardFitService {
 					measurementCache,
 					artworkResult,
 					performanceTrace,
+					design,
 				);
 				return finalized;
 			}
@@ -255,6 +269,7 @@ export class ItemCardFitService {
 		measurementCache: PageMeasurementCache,
 		onMeasured: (bodyFontPoints: number, fit: MeasuredFit) => void,
 		performanceTrace?: PlanningPerformanceTrace,
+		design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 	): Promise<AdaptiveBodyFit<MeasuredFit> | undefined> {
 		return findBestAdaptiveBodyFit(
 			bodyCandidates,
@@ -269,6 +284,7 @@ export class ItemCardFitService {
 					measurementCache,
 					(state) => onMeasured(bodyFontPoints, state),
 					performanceTrace,
+					design,
 				);
 				return measured
 					? { pageCount: measured.pages.length, value: measured }
@@ -288,8 +304,11 @@ export class ItemCardFitService {
 		measurementCache: PageMeasurementCache,
 		onMeasured: (fit: MeasuredFit) => void,
 		performanceTrace?: PlanningPerformanceTrace,
+		design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 	): Promise<MeasuredFit | undefined> {
-		const artworkShares = showArtwork ? ARTWORK_SHARE_CANDIDATES : [undefined];
+		const artworkShares = showArtwork && design.artworkSize === 'standard'
+			? ARTWORK_SHARE_CANDIDATES
+			: [undefined];
 		for (const artworkSharePercent of artworkShares) {
 			for (const capacityScale of ITEM_CARD_FIT_CAPACITY_SCALES) {
 				const createCandidate = () => planPages({
@@ -299,6 +318,7 @@ export class ItemCardFitService {
 					bodyFontPoints,
 					...(artworkSharePercent !== undefined ? { artworkSharePercent } : {}),
 					...(performanceTrace ? { performanceTrace } : {}),
+					design: normalizeCardDesignProfile(design),
 				});
 				performanceTrace?.increment('candidatePlans');
 				const pages = performanceTrace
@@ -311,6 +331,7 @@ export class ItemCardFitService {
 					artworkResourcePath,
 					measurementCache,
 					performanceTrace,
+					design,
 				);
 				const measurementDuration = performanceNow() - measurementStartedAt;
 				performanceTrace?.addDuration('domFitMeasurement', measurementDuration);
@@ -329,6 +350,7 @@ export class ItemCardFitService {
 					artworkResourcePath,
 					measurementCache,
 					performanceTrace,
+					design,
 				);
 				const compactedPages = performanceTrace
 					? await performanceTrace.measureAsync('paginationCompaction', compact)
@@ -340,6 +362,7 @@ export class ItemCardFitService {
 					artworkResourcePath,
 					measurementCache,
 					performanceTrace,
+					design,
 				);
 				const compactedMeasurementDuration = performanceNow()
 					- compactedMeasurementStartedAt;
@@ -365,6 +388,7 @@ export class ItemCardFitService {
 		artworkResourcePath: string | undefined,
 		measurementCache: PageMeasurementCache,
 		performanceTrace?: PlanningPerformanceTrace,
+		design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 	): Promise<ItemCardPage[]> {
 		const continuationCount = pages.filter(
 			(page) => page.kind === 'continuation',
@@ -381,6 +405,7 @@ export class ItemCardFitService {
 				artworkResourcePath,
 				measurementCache,
 				performanceTrace,
+				design,
 			)),
 		);
 	}
@@ -391,10 +416,12 @@ export class ItemCardFitService {
 		artworkResourcePath: string | undefined,
 		measurementCache: PageMeasurementCache,
 		performanceTrace?: PlanningPerformanceTrace,
+		design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 	): Promise<boolean> {
 		const key = createItemCardPageMeasurementKey(
 			page,
 			measurementCache.artworkFingerprint,
+			design,
 		);
 		let result = measurementCache.values.get(key);
 		if (!result) {
@@ -404,6 +431,7 @@ export class ItemCardFitService {
 				page,
 				artworkResourcePath,
 				measurementCache.artworkFingerprint,
+				design,
 			);
 			measurementCache.values.set(key, result);
 			void result.catch(() => measurementCache.values.delete(key));
@@ -418,6 +446,7 @@ export class ItemCardFitService {
 		page: ItemCardPage,
 		artworkResourcePath?: string,
 		artworkRevisionFingerprint?: string,
+		design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 	): Promise<boolean> {
 		const host = measurementRoot.createDiv({
 			cls: 'ttrpg-card-forge__measurement-card',
@@ -428,6 +457,7 @@ export class ItemCardFitService {
 				page,
 				artworkResourcePath,
 				artworkRevisionFingerprint,
+				design,
 			);
 			await rendered.artworkReady;
 			await waitForLayout(measurementRoot.ownerDocument.defaultView);
@@ -443,6 +473,7 @@ export class ItemCardFitService {
 		artworkResourcePath: string | undefined,
 		measurementCache: PageMeasurementCache,
 		performanceTrace?: PlanningPerformanceTrace,
+		design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 	): Promise<Set<number>> {
 		const unfitPageIndexes = new Set<number>();
 		for (const page of pages) {
@@ -452,6 +483,7 @@ export class ItemCardFitService {
 				artworkResourcePath,
 				measurementCache,
 				performanceTrace,
+				design,
 			)) {
 				unfitPageIndexes.add(page.pageIndex);
 			}
@@ -466,6 +498,7 @@ export class ItemCardFitService {
 		measurementCache: PageMeasurementCache,
 		artworkResult: ArtworkLoadResult,
 		performanceTrace?: PlanningPerformanceTrace,
+		design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 	): Promise<FittedItemCardPlan> {
 		const validate = () => this.measurePages(
 			measurementRoot,
@@ -473,6 +506,7 @@ export class ItemCardFitService {
 			artworkResourcePath,
 			measurementCache,
 			performanceTrace,
+			design,
 		);
 		if (performanceTrace) {
 			await performanceTrace.measureAsync('finalCanonicalValidation', validate);
@@ -500,6 +534,7 @@ function getMinimumPlannedPageCount(
 	bodyCandidates: readonly number[],
 	artworkOrientation: ArtworkOrientation | undefined,
 	performanceTrace?: PlanningPerformanceTrace,
+	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 ): number {
 	return bodyCandidates.reduce((minimum, bodyFontPoints) => Math.min(
 		minimum,
@@ -508,6 +543,7 @@ function getMinimumPlannedPageCount(
 			artworkAvailable: showArtwork,
 			bodyFontPoints,
 			...(performanceTrace ? { performanceTrace } : {}),
+			design: normalizeCardDesignProfile(design),
 		}).length,
 	), Number.POSITIVE_INFINITY);
 }
@@ -515,6 +551,7 @@ function getMinimumPlannedPageCount(
 export function createItemCardPageMeasurementKey(
 	page: ItemCardPage,
 	artworkFingerprint?: string,
+	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 ): string {
 	return JSON.stringify({
 		renderRevision: ITEM_CARD_MEASUREMENT_RENDER_REVISION,
@@ -526,6 +563,7 @@ export function createItemCardPageMeasurementKey(
 			dpi: PHYSICAL_CARD_PROFILE.dpi,
 		},
 		artworkFingerprint: artworkFingerprint ?? null,
+		layoutDesignFingerprint: createLayoutDesignFingerprint(design),
 		item: {
 			filePath: page.item.filePath,
 			name: page.item.name,

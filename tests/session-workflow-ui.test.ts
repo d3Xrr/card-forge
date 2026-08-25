@@ -52,10 +52,10 @@ void test('Add current item resolves through the canonical index and cannot acce
 		'private async resolveActiveIndexedItem',
 	);
 	assert.match(command, /resolveActiveIndexedItem\(\)/u);
-	assert.match(command, /addCurrentIndexedItemToQueue\(this\.printQueue, item\)/u);
+	assert.match(command, /addCurrentIndexedItemToQueue\([\s\S]*this\.printQueue,[\s\S]*item,[\s\S]*createCardDesignProfile\(getCardDesignDefaults\(this\.settings\)\)/u);
 	assert.match(command, /Added \$\{item\.name\} to Card Forge print queue/u);
 	assert.doesNotMatch(command, /draftOverrides|activateView/u);
-	assert.match(currentItemWorkflow, /return queue\.add\(item\.filePath\);/u);
+	assert.match(currentItemWorkflow, /return queue\.add\(item\.filePath, undefined, design\);/u);
 	assert.doesNotMatch(currentItemWorkflow, /draftOverrides|overrides\s*\?/u);
 });
 

@@ -152,7 +152,7 @@ export function getItemCardLayoutProfile(
 		: values.artworkSharePercent;
 	const artworkSharePercent = artworkShareOverride === undefined
 		? defaultArtworkSharePercent
-		: Math.min(defaultArtworkSharePercent, Math.max(16, artworkShareOverride));
+		: Math.min(60, Math.max(16, artworkShareOverride));
 	return {
 		artworkSharePercent,
 		printFontPoints: safeBodyFontPoints,

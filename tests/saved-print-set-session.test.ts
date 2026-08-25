@@ -75,6 +75,19 @@ void test('canonical fingerprint ignores live IDs and runtime-only properties', 
 	);
 });
 
+void test('canonical fingerprint treats missing legacy design as explicit legacy design', () => {
+	const legacy = [{ filePath: 'items/a.md', quantity: 1 }];
+	const explicit = [{
+		filePath: 'items/a.md',
+		quantity: 1,
+		design: { theme: 'dark' as const, artworkSize: 'standard' as const, density: 'standard' as const },
+	}];
+	assert.equal(
+		createSavedPrintSetQueueFingerprint(legacy),
+		createSavedPrintSetQueueFingerprint(explicit),
+	);
+});
+
 void test('every meaningful queue mutation marks an active set dirty', () => {
 	const mutationCases: Array<[string, (queue: PrintQueueService) => void]> = [
 		['quantity', (queue) => queue.increment(queue.getEntries()[0]!.id)],

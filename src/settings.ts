@@ -8,6 +8,12 @@ import {
 import type TTRPGCardForgePlugin from './main';
 import { DEFAULT_PDF_EXPORT_FOLDER } from './export/vault-pdf-storage';
 import { CARD_FORGE_ASSET_FOLDER } from './services/artwork-importer-core';
+import type {
+	CardArtworkSize,
+	CardDensity,
+	CardDesignDefaults,
+	CardTheme,
+} from './models/card-design';
 
 export interface CardForgeSettings {
 	itemFolder: string;
@@ -15,6 +21,9 @@ export interface CardForgeSettings {
 	cardForgeAssetsFolder: string;
 	showCropMarks: boolean;
 	openPdfAfterExport: boolean;
+	defaultCardTheme: CardTheme;
+	defaultArtworkSize: CardArtworkSize;
+	defaultCardDensity: CardDensity;
 }
 
 export const DEFAULT_SETTINGS: CardForgeSettings = {
@@ -23,7 +32,20 @@ export const DEFAULT_SETTINGS: CardForgeSettings = {
 	cardForgeAssetsFolder: CARD_FORGE_ASSET_FOLDER,
 	showCropMarks: true,
 	openPdfAfterExport: false,
+	defaultCardTheme: 'dark',
+	defaultArtworkSize: 'standard',
+	defaultCardDensity: 'standard',
 };
+
+export function getCardDesignDefaults(
+	settings: Readonly<CardForgeSettings>,
+): CardDesignDefaults {
+	return {
+		theme: settings.defaultCardTheme,
+		artworkSize: settings.defaultArtworkSize,
+		density: settings.defaultCardDensity,
+	};
+}
 
 export class CardForgeSettingTab extends PluginSettingTab {
 	constructor(private readonly plugin: TTRPGCardForgePlugin) {
@@ -75,6 +97,45 @@ export class CardForgeSettingTab extends PluginSettingTab {
 					assetsFolderSetting.setDesc(message);
 				}
 			}));
+
+		new Setting(containerEl)
+			.setName('Default card theme')
+			.setDesc('Theme snapshot used for source previews and newly added cards.')
+			.addDropdown((dropdown) => dropdown
+				.addOptions({
+					dark: 'Dark',
+					light: 'Light',
+					'printer-friendly': 'Printer Friendly',
+				})
+				.setValue(this.plugin.settings.defaultCardTheme)
+				.onChange(async (value) => {
+					await this.plugin.updateDefaultCardTheme(value as CardTheme);
+				}));
+
+		new Setting(containerEl)
+			.setName('Default artwork size')
+			.setDesc('Artwork allocation snapshot used for newly added cards.')
+			.addDropdown((dropdown) => dropdown
+				.addOptions({
+					standard: 'Standard',
+					larger: 'Larger',
+					minimal: 'Minimal',
+					hidden: 'Hidden',
+				})
+				.setValue(this.plugin.settings.defaultArtworkSize)
+				.onChange(async (value) => {
+					await this.plugin.updateDefaultArtworkSize(value as CardArtworkSize);
+				}));
+
+		new Setting(containerEl)
+			.setName('Default information density')
+			.setDesc('Bounded spacing preset used for newly added cards.')
+			.addDropdown((dropdown) => dropdown
+				.addOptions({ standard: 'Standard', compact: 'Compact' })
+				.setValue(this.plugin.settings.defaultCardDensity)
+				.onChange(async (value) => {
+					await this.plugin.updateDefaultCardDensity(value as CardDensity);
+				}));
 
 		new Setting(containerEl)
 			.setName('Show crop marks')
@@ -133,6 +194,45 @@ export class CardForgeSettingTab extends PluginSettingTab {
 				},
 			},
 			{
+				name: 'Default card theme',
+				desc: 'Theme snapshot used for source previews and newly added cards.',
+				control: {
+					type: 'dropdown',
+					key: 'defaultCardTheme',
+					defaultValue: DEFAULT_SETTINGS.defaultCardTheme,
+					options: {
+						dark: 'Dark',
+						light: 'Light',
+						'printer-friendly': 'Printer Friendly',
+					},
+				},
+			},
+			{
+				name: 'Default artwork size',
+				desc: 'Artwork allocation snapshot used for newly added cards.',
+				control: {
+					type: 'dropdown',
+					key: 'defaultArtworkSize',
+					defaultValue: DEFAULT_SETTINGS.defaultArtworkSize,
+					options: {
+						standard: 'Standard',
+						larger: 'Larger',
+						minimal: 'Minimal',
+						hidden: 'Hidden',
+					},
+				},
+			},
+			{
+				name: 'Default information density',
+				desc: 'Bounded spacing preset used for newly added cards.',
+				control: {
+					type: 'dropdown',
+					key: 'defaultCardDensity',
+					defaultValue: DEFAULT_SETTINGS.defaultCardDensity,
+					options: { standard: 'Standard', compact: 'Compact' },
+				},
+			},
+			{
 				name: 'Show crop marks',
 				desc: 'Draw thin cut marks outside each physical card. No bleed is added.',
 				control: {
@@ -175,6 +275,12 @@ export class CardForgeSettingTab extends PluginSettingTab {
 			await this.plugin.updateShowCropMarks(value);
 		} else if (key === 'openPdfAfterExport' && typeof value === 'boolean') {
 			await this.plugin.updateOpenPdfAfterExport(value);
+		} else if (key === 'defaultCardTheme' && typeof value === 'string') {
+			await this.plugin.updateDefaultCardTheme(value as CardTheme);
+		} else if (key === 'defaultArtworkSize' && typeof value === 'string') {
+			await this.plugin.updateDefaultArtworkSize(value as CardArtworkSize);
+		} else if (key === 'defaultCardDensity' && typeof value === 'string') {
+			await this.plugin.updateDefaultCardDensity(value as CardDensity);
 		}
 	}
 

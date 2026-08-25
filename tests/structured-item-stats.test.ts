@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { ItemCardData } from '../src/models/item';
+import { normalizeCardDesignProfile } from '../src/models/card-design';
 import { planItemCardPages } from '../src/renderer/item-card-planner';
 import {
 	buildItemStatRows,
@@ -110,6 +111,29 @@ void test('base provenance hides only inherited Cost from physical statistics', 
 		'Weight',
 	]);
 	assert.equal(hasMeaningfulItemStats(item), true);
+});
+
+void test('bounded design visibility can force inherited Cost and hide independent fields', () => {
+	const item = createItem({
+		damage: '1d6 bludgeoning',
+		damageTwoHanded: '1d8 bludgeoning',
+		weight: 4,
+		cost: '2 sp',
+		source: 'XPHB',
+		structuredFieldOrigins: { cost: 'base' },
+	});
+	const design = normalizeCardDesignProfile({
+		theme: 'dark',
+		artworkSize: 'standard',
+		density: 'standard',
+		fieldVisibility: { damage: false, cost: true, weight: false, source: false },
+	});
+	assert.deepEqual(buildItemStatRows(item, design), [
+		{ label: 'Damage', values: ['Two-handed: 1d8 bludgeoning'] },
+		{ label: 'Cost', values: ['2 sp'] },
+	]);
+	const pages = planItemCardPages(item, { design });
+	assert.equal(pages.at(-1)?.showSource, false);
 });
 
 void test('promotes Scimitar metadata to labeled structured rows', () => {

@@ -1,4 +1,12 @@
 import type { ItemCardData } from '../models/item';
+import {
+	createLayoutDesignFingerprint,
+	isCardDesignFieldVisible,
+	LEGACY_CARD_DESIGN_PROFILE,
+	normalizeCardDesignProfile,
+	type CardArtworkSize,
+	type CardDesignProfile,
+} from '../models/card-design';
 import type {
 	ItemCardPage,
 	ItemCardPageKind,
@@ -30,6 +38,7 @@ export interface ItemCardPlanOptions {
 	capacityScale?: number;
 	bodyFontPoints?: number;
 	artworkSharePercent?: number;
+	design?: CardDesignProfile;
 	performanceTrace?: PlanningPerformanceTrace;
 }
 
@@ -147,6 +156,7 @@ function createItemCardPlanOptionsKey(
 			options.bodyFontPoints ?? selectPreferredBodyFontPoints(item.description),
 		),
 		artworkSharePercent: options.artworkSharePercent ?? null,
+		layoutDesignFingerprint: createLayoutDesignFingerprint(options.design),
 	});
 }
 
@@ -158,11 +168,20 @@ export function planPreparedItemCardPages(
 	if (context.manualSegments && context.manualSegments.length > 1) {
 		return planManualCardSegments(item, context, options);
 	}
-	const capacityScale = clampCapacityScale(options.capacityScale ?? 1);
+	const design = normalizeCardDesignProfile(options.design);
+	const densityCapacityMultiplier = design.density === 'compact' ? 1.12 : 1;
+	const capacityScale = clampCapacityScale(options.capacityScale ?? 1)
+		* densityCapacityMultiplier;
 	const { allBlocks, sections } = context;
-	const artworkAvailable = options.artworkAvailable ?? item.hasImage;
+	const artworkAvailable = design.artworkSize !== 'hidden'
+		&& (options.artworkAvailable ?? item.hasImage);
 	const layoutItem = artworkAvailable ? item : { ...item, hasImage: false };
-	const strategy = selectItemCardContentStrategy(item, artworkAvailable, allBlocks.length > 0);
+	const strategy = selectItemCardContentStrategy(
+		item,
+		artworkAvailable,
+		allBlocks.length > 0,
+		design,
+	);
 	const statsPresentation = getStrategyStatsPresentation(strategy);
 	const bodyFontPoints = clampBodyFontPoints(
 		options.bodyFontPoints ?? selectPreferredBodyFontPoints(item.description),
@@ -173,13 +192,18 @@ export function planPreparedItemCardPages(
 		options.artworkOrientation,
 		statsPresentation,
 	);
+	const artworkSharePercent = resolveArtworkSharePercent(
+		primaryLayout,
+		design.artworkSize,
+		options.artworkSharePercent,
+	);
 	const primaryCapacity = MINIMUM_BODY_CAPACITIES[primaryLayout]
 		* typographyCapacityScale
 		* capacityScale;
 	const primaryContentCapacity = Math.max(
 		1,
 		primaryCapacity - (statsPresentation
-			? estimateItemStatsLoad(item, statsPresentation)
+			? estimateItemStatsLoad(item, statsPresentation, design)
 			: 0),
 	);
 	const continuationCapacity = MINIMUM_BODY_CAPACITIES.continuation
@@ -197,8 +221,8 @@ export function planPreparedItemCardPages(
 			showStats: statsPresentation !== undefined,
 			...(statsPresentation ? { statsPresentation } : {}),
 			bodyFontPoints,
-			...(options.artworkSharePercent !== undefined
-				? { artworkSharePercent: options.artworkSharePercent }
+			...(artworkSharePercent !== undefined
+				? { artworkSharePercent }
 				: {}),
 			hasUnsplitOverflow: false,
 			contentCapacity: primaryContentCapacity,
@@ -213,7 +237,7 @@ export function planPreparedItemCardPages(
 			artworkAvailable,
 			statsPresentation,
 			bodyFontPoints,
-			options.artworkSharePercent,
+			artworkSharePercent,
 		);
 		appendCraftingPages(
 			planned,
@@ -232,8 +256,8 @@ export function planPreparedItemCardPages(
 			showStats: statsPresentation !== undefined,
 			...(statsPresentation ? { statsPresentation } : {}),
 			bodyFontPoints,
-			...(options.artworkSharePercent !== undefined
-				? { artworkSharePercent: options.artworkSharePercent }
+			...(artworkSharePercent !== undefined
+				? { artworkSharePercent }
 				: {}),
 			hasUnsplitOverflow: false,
 			contentCapacity: primaryContentCapacity,
@@ -260,7 +284,8 @@ export function planPreparedItemCardPages(
 		...(page.statsPresentation
 			? { statsPresentation: page.statsPresentation }
 			: {}),
-		showSource: pageIndex === pageCount - 1,
+		showSource: pageIndex === pageCount - 1
+			&& isCardDesignFieldVisible(item, 'source', design),
 		...(options.artworkOrientation
 			? { artworkOrientation: options.artworkOrientation }
 			: {}),
@@ -285,9 +310,12 @@ function planManualCardSegments(
 	const bodyFontPoints = clampBodyFontPoints(
 		options.bodyFontPoints ?? selectPreferredBodyFontPoints(item.description),
 	);
+	const design = normalizeCardDesignProfile(options.design);
+	const densityCapacityMultiplier = design.density === 'compact' ? 1.12 : 1;
 	const continuationCapacity = MINIMUM_BODY_CAPACITIES.continuation
 		* (7 / bodyFontPoints)
-		* clampCapacityScale(options.capacityScale ?? 1);
+		* clampCapacityScale(options.capacityScale ?? 1)
+		* densityCapacityMultiplier;
 	const subsequentPages: ItemCardPage[] = [];
 	for (const segment of segments.slice(1)) {
 		const packed = packBlocks(segment, continuationCapacity, false);
@@ -325,7 +353,8 @@ function planManualCardSegments(
 		title: item.name,
 		pageIndex,
 		pageCount: combined.length,
-		showSource: pageIndex === combined.length - 1,
+		showSource: pageIndex === combined.length - 1
+			&& isCardDesignFieldVisible(item, 'source', design),
 	}));
 }
 
@@ -333,16 +362,36 @@ export function selectItemCardContentStrategy(
 	item: ItemCardData,
 	artworkAvailable = item.hasImage,
 	hasRulesProse = parseSemanticMarkdown(item.description).length > 0,
+	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 ): ItemCardContentStrategy {
-	if (!hasRulesProse && hasMeaningfulItemStats(item)) {
+	if (!hasRulesProse && hasMeaningfulItemStats(item, design)) {
 		return 'full-stats';
 	}
-	if (hasRulesProse && hasMeaningfulItemStats(item)) {
+	if (hasRulesProse && hasMeaningfulItemStats(item, design)) {
 		return artworkAvailable
 			? 'prose-artwork-compact-stats'
 			: 'prose-compact-stats';
 	}
 	return 'prose-only';
+}
+
+export const ARTWORK_PRESET_ALLOCATIONS = Object.freeze({
+	larger: Object.freeze({ image: 56, portrait: 42, compact: 36, text: 0 }),
+	minimal: Object.freeze({ image: 16, portrait: 28, compact: 16, text: 0 }),
+});
+
+export function resolveArtworkSharePercent(
+	layout: ItemCardLayout,
+	artworkSize: CardArtworkSize,
+	standardOverride?: number,
+): number | undefined {
+	if (layout === 'text' || artworkSize === 'hidden') {
+		return undefined;
+	}
+	if (artworkSize === 'standard') {
+		return standardOverride;
+	}
+	return ARTWORK_PRESET_ALLOCATIONS[artworkSize][layout];
 }
 
 export function balanceSparseFinalPage<T extends BalanceableCardPage>(pages: T[]): void {

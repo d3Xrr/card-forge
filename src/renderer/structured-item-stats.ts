@@ -2,6 +2,11 @@ import {
 	getStructuredItemFieldOrigin,
 	type ItemCardData,
 } from '../models/item';
+import {
+	isCardDesignFieldVisible,
+	LEGACY_CARD_DESIGN_PROFILE,
+	type CardDesignProfile,
+} from '../models/card-design';
 import type {
 	ItemCardLayout,
 	ItemStatsPresentation,
@@ -26,17 +31,32 @@ export type CompactStatsLayout = 'grid' | 'stacked';
 
 const COMPACT_ATOMIC_VALUE_MAX_LENGTH = 26;
 
-export function getItemStats(item: ItemCardData): ItemStats {
+export function getItemStats(
+	item: ItemCardData,
+	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
+): ItemStats {
 	return {
-		...(item.damage ? { damage: item.damage } : {}),
-		...(item.damageTwoHanded ? { damageTwoHanded: item.damageTwoHanded } : {}),
-		...(item.range ? { range: item.range } : {}),
-		properties: [...(item.properties ?? [])],
-		...(item.mastery ? { mastery: item.mastery } : {}),
-		...(item.cost && shouldRenderStructuredItemField(item, 'cost')
+		...(item.damage && isCardDesignFieldVisible(item, 'damage', design)
+			? { damage: item.damage }
+			: {}),
+		...(item.damageTwoHanded && isCardDesignFieldVisible(item, 'damageTwoHanded', design)
+			? { damageTwoHanded: item.damageTwoHanded }
+			: {}),
+		...(item.range && isCardDesignFieldVisible(item, 'range', design)
+			? { range: item.range }
+			: {}),
+		properties: isCardDesignFieldVisible(item, 'properties', design)
+			? [...(item.properties ?? [])]
+			: [],
+		...(item.mastery && isCardDesignFieldVisible(item, 'mastery', design)
+			? { mastery: item.mastery }
+			: {}),
+		...(item.cost && isCardDesignFieldVisible(item, 'cost', design)
 			? { cost: item.cost }
 			: {}),
-		...(item.weight !== undefined ? { weight: item.weight } : {}),
+		...(item.weight !== undefined && isCardDesignFieldVisible(item, 'weight', design)
+			? { weight: item.weight }
+			: {}),
 	};
 }
 
@@ -47,8 +67,11 @@ export function shouldRenderStructuredItemField(
 	return getStructuredItemFieldOrigin(item, field) !== 'base';
 }
 
-export function hasMeaningfulItemStats(item: ItemCardData): boolean {
-	const stats = getItemStats(item);
+export function hasMeaningfulItemStats(
+	item: ItemCardData,
+	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
+): boolean {
+	const stats = getItemStats(item, design);
 	return Boolean(
 		stats.damage
 		|| stats.damageTwoHanded
@@ -60,8 +83,11 @@ export function hasMeaningfulItemStats(item: ItemCardData): boolean {
 	);
 }
 
-export function buildItemStatRows(item: ItemCardData): ItemStatRow[] {
-	const stats = getItemStats(item);
+export function buildItemStatRows(
+	item: ItemCardData,
+	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
+): ItemStatRow[] {
+	const stats = getItemStats(item, design);
 	const rows: ItemStatRow[] = [];
 	if (stats.damage || stats.damageTwoHanded) {
 		const values: string[] = [];
@@ -96,14 +122,15 @@ export function buildItemStatRows(item: ItemCardData): ItemStatRow[] {
 export function estimateItemStatsLoad(
 	item: ItemCardData,
 	presentation: ItemStatsPresentation,
+	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 ): number {
 	if (presentation === 'compact') {
-		const rows = buildItemStatRows(item);
+		const rows = buildItemStatRows(item, design);
 		const rowUnits = rows.reduce((total, row) =>
 			total + (row.label === 'Properties' || row.values.length > 1 ? 1 : 0.5), 0);
 		return rowUnits * 1.15;
 	}
-	return buildItemStatRows(item).reduce(
+	return buildItemStatRows(item, design).reduce(
 		(total, row) => total + 1.15 + Math.max(0, row.values.length - 1) * 0.8,
 		0,
 	);
@@ -114,6 +141,7 @@ export function renderItemStats(
 	item: ItemCardData,
 	presentation: ItemStatsPresentation,
 	cardLayout: ItemCardLayout,
+	design: Readonly<CardDesignProfile> = LEGACY_CARD_DESIGN_PROFILE,
 ): void {
 	const compactLayout = selectCompactStatsLayout(presentation, cardLayout);
 	const stats = container.createDiv({
@@ -123,7 +151,7 @@ export function renderItemStats(
 			...(compactLayout ? [`ttrpg-card-forge-card__stats--${compactLayout}`] : []),
 		].join(' '),
 	});
-	for (const row of buildItemStatRows(item)) {
+	for (const row of buildItemStatRows(item, design)) {
 		const stat = stats.createDiv({ cls: 'ttrpg-card-forge-card__stat' });
 		stat.dataset.stat = row.label.toLocaleLowerCase();
 		stat.toggleClass('is-multiline', row.values.length > 1);

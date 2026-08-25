@@ -81,6 +81,7 @@ void test('layout profiles never shrink below the minimum print body size', () =
 	assert.equal(getItemCardLayoutProfile('image', 10, true).artworkSharePercent, 34);
 	assert.equal(getItemCardLayoutProfile('compact', 8, true, 20).artworkSharePercent, 20);
 	assert.equal(getItemCardLayoutProfile('compact', 8, true, 10).artworkSharePercent, 16);
+	assert.equal(getItemCardLayoutProfile('image', 10, false, 56).artworkSharePercent, 56);
 });
 
 void test('keeps title, subtitle, stats, and source floors independent from adaptive body type', () => {

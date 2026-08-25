@@ -4,6 +4,7 @@ import {
 	normalizePrintQueueEntrySnapshot,
 } from '../models/print-queue';
 import type { SavedPrintSet } from '../models/saved-print-set';
+import { normalizeCardDesignProfile } from '../models/card-design';
 
 export interface ActiveSavedPrintSetState {
 	activeSet?: SavedPrintSet;
@@ -119,6 +120,13 @@ export function createSavedPrintSetQueueFingerprint(
 ): string {
 	return JSON.stringify(entries.flatMap((entry) => {
 		const normalized = normalizePrintQueueEntrySnapshot(entry);
-		return normalized ? [createPrintQueueEntrySnapshot(normalized)] : [];
+		if (!normalized) {
+			return [];
+		}
+		const snapshot = createPrintQueueEntrySnapshot(normalized);
+		return [{
+			...snapshot,
+			design: normalizeCardDesignProfile(snapshot.design),
+		}];
 	}));
 }
