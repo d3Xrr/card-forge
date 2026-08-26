@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createRasterCacheKey } from '../src/export/card-raster-identity';
+import {
+	createBackRasterCacheKey,
+	createRasterCacheKey,
+} from '../src/export/card-raster-identity';
+import { createCardDesignProfile } from '../src/models/card-design';
 import type { ItemCardData } from '../src/models/item';
 import type { ItemCardPage } from '../src/models/item-card-page';
 
@@ -74,6 +78,7 @@ void test('resolved Auto density participates in completed raster identity', () 
 	standard.resolvedDensity = 'standard';
 	const compact = { ...structuredClone(standard), resolvedDensity: 'compact' as const };
 	const design = {
+		...createCardDesignProfile(),
 		theme: 'dark' as const,
 		artworkSize: 'standard' as const,
 		density: 'auto' as const,
@@ -82,6 +87,74 @@ void test('resolved Auto density participates in completed raster identity', () 
 		createRasterCacheKey({ page: standard, design }),
 		createRasterCacheKey({ page: compact, design }),
 	);
+});
+
+void test('front framing and back framing invalidate only their relevant raster side', () => {
+	const page = createPage({ rules: 'Framed art.' });
+	const baseline = createCardDesignProfile();
+	const frontFramed = {
+		...baseline,
+		frontArtworkFraming: { fitMode: 'fill' as const, zoom: 1.5, panX: 20, panY: 0 },
+	};
+	const backed = {
+		...baseline,
+		back: {
+			style: 'artwork' as const,
+			artworkFraming: { fitMode: 'fill' as const, zoom: 2, panX: -10, panY: 30 },
+		},
+	};
+	assert.notEqual(
+		createRasterCacheKey({ page, design: baseline }),
+		createRasterCacheKey({ page, design: frontFramed }),
+	);
+	assert.equal(
+		createRasterCacheKey({ page, design: baseline }),
+		createRasterCacheKey({ page, design: backed }),
+	);
+	assert.notEqual(
+		createBackRasterCacheKey({ page, design: baseline }),
+		createBackRasterCacheKey({ page, design: backed }),
+	);
+});
+
+void test('continuation pages of one logical card share a back raster identity', () => {
+	const primary = createPage({ rules: 'Page one.' });
+	primary.pageCount = 2;
+	const continuation = structuredClone(primary);
+	continuation.pageIndex = 1;
+	continuation.kind = 'continuation';
+	continuation.title = `${primary.title} (cont.)`;
+	continuation.blocks = [{ type: 'paragraph', markdown: 'Page two.' }];
+	const design = {
+		...createCardDesignProfile(),
+		back: { style: 'generic' as const, artworkFraming: { fitMode: 'fit' as const, zoom: 1, panX: 0, panY: 0 } },
+	};
+	assert.equal(
+		createBackRasterCacheKey({ page: primary, physicalPlanKey: 'logical', design }),
+		createBackRasterCacheKey({ page: continuation, physicalPlanKey: 'logical', design }),
+	);
+});
+
+void test('mixed back styles cannot incorrectly share raster output', () => {
+	const page = createPage({ rules: 'Mixed back styles.' });
+	const styles = ['none', 'generic', 'rarity', 'item-type', 'artwork', 'custom-image'] as const;
+	const keys = styles.map((style) => createBackRasterCacheKey({
+		page,
+		artworkResourcePath: style === 'artwork' || style === 'custom-image'
+			? `app://art/${style}.png`
+			: undefined,
+		design: {
+			...createCardDesignProfile(),
+			back: {
+				style,
+				...(style === 'custom-image'
+					? { customArtworkPath: 'Card Forge Assets/back.png' }
+					: {}),
+				artworkFraming: { fitMode: 'fit', zoom: 1, panX: 0, panY: 0 },
+			},
+		},
+	}));
+	assert.equal(new Set(keys).size, styles.length);
 });
 
 function createPage(input: {

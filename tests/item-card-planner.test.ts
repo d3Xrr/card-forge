@@ -22,6 +22,7 @@ import {
 	partitionCraftingSection,
 	serializeSemanticMarkdown,
 } from '../src/renderer/semantic-markdown';
+import { createCardDesignProfile } from '../src/models/card-design';
 
 function createItem(overrides: Partial<ItemCardData> = {}): ItemCardData {
 	return {
@@ -47,18 +48,18 @@ void test('artwork presentation presets use planner-owned allocations', () => {
 
 	const larger = planItemCardPages(createItem(), {
 		artworkOrientation: 'landscape',
-		design: { theme: 'dark', artworkSize: 'larger', density: 'standard' },
+		design: { ...createCardDesignProfile(), theme: 'dark', artworkSize: 'larger', density: 'standard' },
 	});
 	assert.equal(larger[0]?.showArtwork, true);
 	assert.equal(larger[0]?.artworkSharePercent, 56);
 	const minimal = planItemCardPages(createItem(), {
 		artworkOrientation: 'landscape',
-		design: { theme: 'dark', artworkSize: 'minimal', density: 'standard' },
+		design: { ...createCardDesignProfile(), theme: 'dark', artworkSize: 'minimal', density: 'standard' },
 	});
 	assert.equal(minimal[0]?.artworkSharePercent, 16);
 	const hidden = planItemCardPages(createItem(), {
 		artworkOrientation: 'landscape',
-		design: { theme: 'dark', artworkSize: 'hidden', density: 'standard' },
+		design: { ...createCardDesignProfile(), theme: 'dark', artworkSize: 'hidden', density: 'standard' },
 	});
 	assert.equal(hidden[0]?.showArtwork, false);
 	assert.equal(hidden[0]?.layout, 'text');
@@ -262,11 +263,11 @@ void test('explicit density is resolved once across primary, continuation, and C
 		),
 	].join('\n\n');
 	const standard = planItemCardPages(createItem({ description }), {
-		design: { theme: 'dark', artworkSize: 'larger', density: 'standard' },
+		design: { ...createCardDesignProfile(), theme: 'dark', artworkSize: 'larger', density: 'standard' },
 		artworkOrientation: 'landscape',
 	});
 	const compact = planItemCardPages(createItem({ description }), {
-		design: { theme: 'dark', artworkSize: 'larger', density: 'compact' },
+		design: { ...createCardDesignProfile(), theme: 'dark', artworkSize: 'larger', density: 'compact' },
 		artworkOrientation: 'landscape',
 	});
 	assert.ok(standard.every((page) => page.resolvedDensity === 'standard'));

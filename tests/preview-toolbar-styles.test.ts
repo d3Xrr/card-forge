@@ -9,13 +9,13 @@ void test('preview toolbar retains stable left, center, and right zones', () => 
 	const pagination = getRule(css, '.ttrpg-card-forge__page-navigation');
 	const status = getRule(css, '.ttrpg-card-forge__preview-indicator');
 
-	assert.match(toolbar, /grid-template-columns:\s*minmax\(max-content,\s*1fr\)\s+auto\s+minmax\(0,\s*1fr\)/iu);
+	assert.match(toolbar, /grid-template-columns:\s*minmax\(max-content,\s*1fr\)\s+auto\s+auto\s+minmax\(0,\s*1fr\)/iu);
 	assert.match(toolbar, /margin-block-start:\s*var\(--size-4-1\)/iu);
 	assert.match(modes, /grid-column:\s*1/iu);
 	assert.match(modes, /justify-self:\s*start/iu);
-	assert.match(pagination, /grid-column:\s*2/iu);
+	assert.match(pagination, /grid-column:\s*3/iu);
 	assert.match(pagination, /justify-self:\s*center/iu);
-	assert.match(status, /grid-column:\s*3/iu);
+	assert.match(status, /grid-column:\s*4/iu);
 	assert.match(status, /justify-self:\s*end/iu);
 });
 

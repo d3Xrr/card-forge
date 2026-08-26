@@ -9,9 +9,9 @@ import { resolvePlanningDensity } from './card-design-policy';
 import { ArtworkBoundsService } from './artwork-bounds';
 import {
 	classifyArtworkOrientation,
-	ITEM_ARTWORK_FIT_MODE,
 	type ArtworkOrientation,
 } from './artwork-orientation';
+import { applyArtworkFraming } from './artwork-framing';
 import {
 	formatLayoutName,
 	getItemCardLayoutProfile,
@@ -143,6 +143,7 @@ export class ItemCardRenderer {
 				item,
 				artworkResourcePath,
 				this.artworkBounds,
+				design.frontArtworkFraming,
 				artworkRevisionFingerprint,
 			)
 			: Promise.resolve<ArtworkLoadResult>({ status: 'not-rendered' });
@@ -224,6 +225,7 @@ function renderArtwork(
 	item: ItemCardData,
 	artworkResourcePath: string,
 	artworkBounds: ArtworkBoundsService,
+	framing: CardDesignProfile['frontArtworkFraming'],
 	artworkRevisionFingerprint?: string,
 ): Promise<ArtworkLoadResult> {
 	const artwork = appendElement(content, 'figure', 'ttrpg-card-forge-card__artwork');
@@ -231,7 +233,7 @@ function renderArtwork(
 	image.alt = `${item.name} artwork`;
 	image.loading = 'eager';
 	image.draggable = false;
-	image.dataset.fitMode = ITEM_ARTWORK_FIT_MODE;
+	applyArtworkFraming(image, framing);
 
 	return new Promise((resolve) => {
 		image.addEventListener('load', () => {
@@ -242,6 +244,12 @@ function renderArtwork(
 			).then((bounds) => {
 				const normalized = card.closest('.ttrpg-card-forge__measurement') === null
 					&& artworkBounds.applyVisibleBounds(image, artwork, bounds);
+				const normalizedArtwork = artwork.querySelector<HTMLCanvasElement>(
+					'.ttrpg-card-forge-card__normalized-artwork',
+				);
+				if (normalizedArtwork) {
+					applyArtworkFraming(normalizedArtwork, framing);
+				}
 				card.toggleClass('ttrpg-card-forge-card--artwork-normalized', normalized);
 				const orientation = classifyArtworkOrientation(
 					bounds?.width ?? image.naturalWidth,

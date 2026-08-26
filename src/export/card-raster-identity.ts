@@ -1,9 +1,13 @@
 import type { ItemCardPage } from '../models/item-card-page';
 import type { CardDesignProfile } from '../models/card-design';
-import { createVisualDesignFingerprint } from '../models/card-design';
+import {
+	createBackVisualDesignFingerprint,
+	createFrontVisualDesignFingerprint,
+} from '../models/card-design';
 import { serializeItemCardPlanSignature } from '../renderer/item-card-plan-signature';
 
-export const CARD_RASTER_CACHE_REVISION = 'card-raster-v5-stat-packing';
+export const CARD_RASTER_CACHE_REVISION = 'card-raster-v6-framing';
+export const CARD_BACK_RASTER_CACHE_REVISION = 'card-back-raster-v1';
 
 export interface CardRasterIdentityInput {
 	page: ItemCardPage;
@@ -24,7 +28,28 @@ export function createRasterCacheKey(input: CardRasterIdentityInput): string {
 		revision: CARD_RASTER_CACHE_REVISION,
 		physicalPlanKey: input.physicalPlanKey ?? null,
 		pageSignature: serializeItemCardPlanSignature([input.page]),
-		visualDesignFingerprint: createVisualDesignFingerprint(input.design),
+		visualDesignFingerprint: createFrontVisualDesignFingerprint(input.design),
+		artwork: {
+			resourcePath: input.artworkResourcePath ?? null,
+			revisionFingerprint: input.artworkRevisionFingerprint ?? null,
+		},
+	});
+}
+
+/** Identifies one logical card back; continuation pages intentionally share it. */
+export function createBackRasterCacheKey(input: CardRasterIdentityInput): string {
+	return JSON.stringify({
+		revision: CARD_BACK_RASTER_CACHE_REVISION,
+		physicalPlanKey: input.physicalPlanKey ?? null,
+		logicalCard: {
+			filePath: input.page.item.filePath,
+			name: input.page.item.name,
+			rarity: input.page.item.rarity ?? null,
+			rarityText: input.page.item.rarityText ?? null,
+			typeText: input.page.item.typeText ?? null,
+			detail: input.page.item.detail ?? null,
+		},
+		backVisualDesignFingerprint: createBackVisualDesignFingerprint(input.design),
 		artwork: {
 			resourcePath: input.artworkResourcePath ?? null,
 			revisionFingerprint: input.artworkRevisionFingerprint ?? null,

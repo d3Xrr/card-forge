@@ -62,9 +62,10 @@ void test('new queue entries snapshot design while legacy entries keep the stabl
 
 	const restored = new PrintQueueService(JSON.parse(JSON.stringify(queue.serialize())) as unknown);
 	assert.deepEqual(restored.getEntry(designed.id)?.design, light);
-	assert.deepEqual(normalizeCardDesignProfile(restored.getEntry(legacy.id)?.design), {
-		theme: 'dark', artworkSize: 'standard', density: 'standard',
-	});
+	assert.deepEqual(
+		normalizeCardDesignProfile(restored.getEntry(legacy.id)?.design),
+		createCardDesignProfile(),
+	);
 });
 
 void test('same content with different designs remains distinct and Duplicate is isolated', () => {
@@ -82,6 +83,41 @@ void test('same content with different designs remains distinct and Duplicate is
 	}));
 	assert.equal(queue.getEntry(light.id)?.design?.theme, 'light');
 	assert.equal(queue.getEntry(duplicate.id)?.design?.theme, 'printer-friendly');
+});
+
+void test('queue, Duplicate, and Saved Sets deeply preserve framing and card backs', () => {
+	const queue = createQueue('phase-6');
+	const design = normalizeCardDesignProfile({
+		frontArtworkFraming: { fitMode: 'fill', zoom: 1.5, panX: 20, panY: -15 },
+		back: {
+			style: 'custom-image',
+			customArtworkPath: 'Card Forge Assets/back.png',
+			artworkFraming: { fitMode: 'fill', zoom: 2, panX: -30, panY: 10 },
+		},
+	});
+	const source = queue.add(item.filePath, undefined, design);
+	const duplicate = queue.duplicate(source.id);
+	assert.ok(duplicate?.design);
+	assert.deepEqual(duplicate.design, design);
+	assert.notStrictEqual(duplicate.design.back, source.design?.back);
+	assert.notStrictEqual(
+		duplicate.design.back.artworkFraming,
+		source.design?.back.artworkFraming,
+	);
+	queue.updateDesign(duplicate.id, normalizeCardDesignProfile({
+		...duplicate.design,
+		back: { ...duplicate.design.back, style: 'rarity' },
+	}));
+	assert.equal(queue.getEntry(source.id)?.design?.back.style, 'custom-image');
+
+	const sets = new SavedPrintSetService([], () => 'phase-6-set', () => 123);
+	const saved = sets.save('Phase 6', queue.getEntries());
+	assert.equal(saved.status, 'created');
+	const restored = new SavedPrintSetService(
+		JSON.parse(JSON.stringify(sets.serialize())) as unknown,
+	);
+	assert.deepEqual(restored.getSets()[0]?.entries[0]?.design, design);
+	assert.notStrictEqual(restored.getSets()[0]?.entries[0]?.design, design);
 });
 
 void test('queue editor save persists content and design atomically', () => {

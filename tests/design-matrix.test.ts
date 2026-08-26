@@ -8,7 +8,11 @@ import {
 	CARD_DENSITIES,
 	CARD_DESIGN_FIELDS,
 	CARD_THEMES,
+	CARD_BACK_STYLES,
+	ARTWORK_FIT_MODES,
 	cloneCardDesignProfile,
+	createBackVisualDesignFingerprint,
+	createFrontVisualDesignFingerprint,
 	createLayoutDesignFingerprint,
 	createVisualDesignFingerprint,
 	LEGACY_CARD_DESIGN_PROFILE,
@@ -102,6 +106,53 @@ void test('exhaustively normalizes, serializes, fingerprints, and snapshots boun
 	);
 	process.stdout.write(`${JSON.stringify({
 		matrix: 'pure-design',
+		profilesTested,
+		runtimeMs: Math.round(performance.now() - startedAt),
+	})}\n`);
+});
+
+void test('checks a bounded deterministic Phase 6 back/framing identity matrix', () => {
+	const startedAt = performance.now();
+	const framings = ARTWORK_FIT_MODES.flatMap((fitMode) => [
+		{ fitMode, zoom: 1, panX: 0, panY: 0 },
+		{ fitMode, zoom: 1.5, panX: 25, panY: -40 },
+		{ fitMode, zoom: 3, panX: -100, panY: 100 },
+	]);
+	let profilesTested = 0;
+	for (const theme of CARD_THEMES) {
+		for (const style of CARD_BACK_STYLES) {
+			for (const framing of framings) {
+				const profile = normalizeCardDesignProfile({
+					theme,
+					frontArtworkFraming: framing,
+					back: {
+						style,
+						...(style === 'custom-image'
+							? { customArtworkPath: 'Card Forge Assets/matrix.png' }
+							: {}),
+						artworkFraming: framing,
+					},
+				});
+				assert.ok(areCardDesignProfilesEqual(
+					profile,
+					normalizeCardDesignProfile(JSON.parse(JSON.stringify(profile))),
+				));
+				assert.equal(
+					createLayoutDesignFingerprint(profile),
+					createLayoutDesignFingerprint(LEGACY_CARD_DESIGN_PROFILE),
+				);
+				assert.ok(createFrontVisualDesignFingerprint(profile));
+				assert.ok(createBackVisualDesignFingerprint(profile));
+				profilesTested += 1;
+			}
+		}
+	}
+	assert.equal(
+		profilesTested,
+		CARD_THEMES.length * CARD_BACK_STYLES.length * framings.length,
+	);
+	process.stdout.write(`${JSON.stringify({
+		matrix: 'phase-6-backs-framing',
 		profilesTested,
 		runtimeMs: Math.round(performance.now() - startedAt),
 	})}\n`);

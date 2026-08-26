@@ -13,6 +13,35 @@ export const CARD_DENSITIES = ['standard', 'compact', 'auto'] as const;
 export type CardDensity = typeof CARD_DENSITIES[number];
 export type ResolvedCardDensity = Exclude<CardDensity, 'auto'>;
 
+export const ARTWORK_FIT_MODES = ['fit', 'fill'] as const;
+export type ArtworkFitMode = typeof ARTWORK_FIT_MODES[number];
+
+export const CARD_BACK_STYLES = [
+	'none',
+	'generic',
+	'rarity',
+	'item-type',
+	'artwork',
+	'custom-image',
+] as const;
+export type CardBackStyle = typeof CARD_BACK_STYLES[number];
+
+export interface ArtworkFraming {
+	fitMode: ArtworkFitMode;
+	/** Bounded multiplier applied inside the planner-owned artwork box. */
+	zoom: number;
+	/** Bounded percentage-like position controls in the range -100..100. */
+	panX: number;
+	panY: number;
+}
+
+export interface CardBackDesign {
+	style: CardBackStyle;
+	/** Vault-relative image path used only by the Custom Image style. */
+	customArtworkPath?: string;
+	artworkFraming: ArtworkFraming;
+}
+
 export const CARD_DESIGN_FIELDS = [
 	'damage',
 	'damageTwoHanded',
@@ -32,6 +61,9 @@ export interface CardDesignProfile {
 	theme: CardTheme;
 	artworkSize: CardArtworkSize;
 	density: CardDensity;
+	frontArtworkFraming: ArtworkFraming;
+	/** Back theme intentionally inherits the bounded front theme in 0.8.0. */
+	back: CardBackDesign;
 	/** Missing keys retain semantic automatic visibility. */
 	fieldVisibility?: CardFieldVisibility;
 }
@@ -46,6 +78,11 @@ export const LEGACY_CARD_DESIGN_PROFILE: Readonly<CardDesignProfile> = Object.fr
 	theme: 'dark',
 	artworkSize: 'standard',
 	density: 'standard',
+	frontArtworkFraming: Object.freeze({ fitMode: 'fit', zoom: 1, panX: 0, panY: 0 }),
+	back: Object.freeze({
+		style: 'none',
+		artworkFraming: Object.freeze({ fitMode: 'fit', zoom: 1, panX: 0, panY: 0 }),
+	}),
 });
 
 export const DEFAULT_CARD_DESIGN_DEFAULTS: Readonly<CardDesignDefaults> = Object.freeze({
@@ -61,6 +98,8 @@ export function createCardDesignProfile(
 		theme: normalizeEnum(defaults.theme, CARD_THEMES, 'dark'),
 		artworkSize: normalizeEnum(defaults.artworkSize, CARD_ARTWORK_SIZES, 'standard'),
 		density: normalizeEnum(defaults.density, CARD_DENSITIES, 'standard'),
+		frontArtworkFraming: createDefaultArtworkFraming(),
+		back: createDefaultCardBackDesign(),
 	};
 }
 
@@ -80,6 +119,11 @@ export function normalizeCardDesignProfile(
 			fallback.artworkSize,
 		),
 		density: normalizeEnum(value.density, CARD_DENSITIES, fallback.density),
+		frontArtworkFraming: normalizeArtworkFraming(
+			value.frontArtworkFraming,
+			fallback.frontArtworkFraming,
+		),
+		back: normalizeCardBackDesign(value.back, fallback.back),
 		...(fieldVisibility ? { fieldVisibility } : {}),
 	};
 }
@@ -91,6 +135,14 @@ export function cloneCardDesignProfile(
 		theme: profile.theme,
 		artworkSize: profile.artworkSize,
 		density: profile.density,
+		frontArtworkFraming: { ...profile.frontArtworkFraming },
+		back: {
+			style: profile.back.style,
+			...(profile.back.customArtworkPath
+				? { customArtworkPath: profile.back.customArtworkPath }
+				: {}),
+			artworkFraming: { ...profile.back.artworkFraming },
+		},
 		...(profile.fieldVisibility
 			? { fieldVisibility: { ...profile.fieldVisibility } }
 			: {}),
@@ -127,7 +179,41 @@ export function createLayoutDesignFingerprint(
 export function createVisualDesignFingerprint(
 	profile: Readonly<CardDesignProfile> | undefined,
 ): string {
-	return createCardDesignFingerprint(profile);
+	return createFrontVisualDesignFingerprint(profile);
+}
+
+/** Pixel identity for a front raster; back-only changes do not rerasterize fronts. */
+export function createFrontVisualDesignFingerprint(
+	profile: Readonly<CardDesignProfile> | undefined,
+): string {
+	const normalized = normalizeCardDesignProfile(profile);
+	return JSON.stringify({
+		theme: normalized.theme,
+		artworkSize: normalized.artworkSize,
+		density: normalized.density,
+		frontArtworkFraming: normalized.frontArtworkFraming,
+		fieldVisibility: canonicalFieldVisibility(normalized.fieldVisibility),
+	});
+}
+
+/** Pixel identity for a back raster; front layout choices are intentionally absent. */
+export function createBackVisualDesignFingerprint(
+	profile: Readonly<CardDesignProfile> | undefined,
+): string {
+	const normalized = normalizeCardDesignProfile(profile);
+	return JSON.stringify({
+		theme: normalized.theme,
+		back: {
+			style: normalized.back.style,
+			...(normalized.back.style === 'custom-image'
+				? { customArtworkPath: normalized.back.customArtworkPath ?? null }
+				: {}),
+			...(normalized.back.style === 'artwork'
+				|| normalized.back.style === 'custom-image'
+				? { artworkFraming: normalized.back.artworkFraming }
+				: {}),
+		},
+	});
 }
 
 export function setCardDesignFieldVisibility(
@@ -227,7 +313,52 @@ function toCanonicalDesign(profile: Readonly<CardDesignProfile> | undefined): ob
 		theme: normalized.theme,
 		artworkSize: normalized.artworkSize,
 		density: normalized.density,
+		frontArtworkFraming: normalized.frontArtworkFraming,
+		back: normalized.back,
 		fieldVisibility: canonicalFieldVisibility(normalized.fieldVisibility),
+	};
+}
+
+export function createDefaultArtworkFraming(): ArtworkFraming {
+	return { fitMode: 'fit', zoom: 1, panX: 0, panY: 0 };
+}
+
+export function createDefaultCardBackDesign(): CardBackDesign {
+	return {
+		style: 'none',
+		artworkFraming: createDefaultArtworkFraming(),
+	};
+}
+
+export function normalizeArtworkFraming(
+	value: unknown,
+	fallback: Readonly<ArtworkFraming> = createDefaultArtworkFraming(),
+): ArtworkFraming {
+	const input = isRecord(value) ? value : {};
+	return {
+		fitMode: normalizeEnum(input.fitMode, ARTWORK_FIT_MODES, fallback.fitMode),
+		zoom: normalizeBoundedNumber(input.zoom, fallback.zoom, 1, 3),
+		panX: normalizeBoundedNumber(input.panX, fallback.panX, -100, 100),
+		panY: normalizeBoundedNumber(input.panY, fallback.panY, -100, 100),
+	};
+}
+
+export function normalizeCardBackDesign(
+	value: unknown,
+	fallback: Readonly<CardBackDesign> = createDefaultCardBackDesign(),
+): CardBackDesign {
+	const input = isRecord(value) ? value : {};
+	const customArtworkPath = normalizeVaultRelativeArtworkPath(
+		input.customArtworkPath,
+		fallback.customArtworkPath,
+	);
+	return {
+		style: normalizeEnum(input.style, CARD_BACK_STYLES, fallback.style),
+		...(customArtworkPath ? { customArtworkPath } : {}),
+		artworkFraming: normalizeArtworkFraming(
+			input.artworkFraming,
+			fallback.artworkFraming,
+		),
 	};
 }
 
@@ -249,6 +380,37 @@ function normalizeEnum<T extends string>(
 	return typeof value === 'string' && values.includes(value as T)
 		? value as T
 		: fallback;
+}
+
+function normalizeBoundedNumber(
+	value: unknown,
+	fallback: number,
+	minimum: number,
+	maximum: number,
+): number {
+	const number = typeof value === 'number' && Number.isFinite(value)
+		? value
+		: fallback;
+	return Math.round(Math.min(maximum, Math.max(minimum, number)) * 100) / 100;
+}
+
+function normalizeVaultRelativeArtworkPath(
+	value: unknown,
+	fallback: string | undefined,
+): string | undefined {
+	const normalized = (typeof value === 'string' ? value : fallback)
+		?.trim()
+		.replace(/\\/gu, '/')
+		.replace(/^\.\//u, '');
+	if (
+		!normalized
+		|| normalized.startsWith('/')
+		|| /^[a-z]:\//iu.test(normalized)
+		|| normalized.split('/').some((segment) => segment === '..')
+	) {
+		return undefined;
+	}
+	return normalized;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -14,6 +14,10 @@ import type {
 	CardDesignDefaults,
 	CardTheme,
 } from './models/card-design';
+import {
+	DEFAULT_PRINT_EXPORT_SETTINGS,
+	type PrintExportSettings,
+} from './models/print-export-settings';
 
 export interface CardForgeSettings {
 	itemFolder: string;
@@ -24,6 +28,7 @@ export interface CardForgeSettings {
 	defaultCardTheme: CardTheme;
 	defaultArtworkSize: CardArtworkSize;
 	defaultCardDensity: CardDensity;
+	printExport: PrintExportSettings;
 }
 
 export const DEFAULT_SETTINGS: CardForgeSettings = {
@@ -35,6 +40,7 @@ export const DEFAULT_SETTINGS: CardForgeSettings = {
 	defaultCardTheme: 'dark',
 	defaultArtworkSize: 'standard',
 	defaultCardDensity: 'standard',
+	printExport: { ...DEFAULT_PRINT_EXPORT_SETTINGS },
 };
 
 export function getCardDesignDefaults(

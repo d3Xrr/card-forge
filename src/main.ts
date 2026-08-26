@@ -37,6 +37,10 @@ import {
 	resolveCurrentIndexedItem,
 } from './services/current-item-workflow';
 import { SavedPrintSetSession } from './services/saved-print-set-session';
+import {
+	normalizePrintExportSettings,
+	type PrintExportSettings,
+} from './models/print-export-settings';
 
 const INDEX_REBUILD_DELAY_MS = 350;
 const QUEUE_ARTWORK_OWNER = 'print-queue';
@@ -122,6 +126,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 				this.physicalPlanCache,
 				this.planningPerformance,
 				this.temporaryArtworkStore,
+				(settings) => this.updatePrintExportSettings(settings),
 			),
 		);
 
@@ -334,6 +339,13 @@ export default class TTRPGCardForgePlugin extends Plugin {
 		await this.persistPluginData();
 	}
 
+	async updatePrintExportSettings(
+		printExport: Readonly<PrintExportSettings>,
+	): Promise<void> {
+		this.settings.printExport = normalizePrintExportSettings(printExport);
+		await this.persistPluginData();
+	}
+
 	async updateDefaultCardTheme(defaultCardTheme: CardTheme): Promise<void> {
 		this.settings.defaultCardTheme = normalizeCardDesignProfile({
 			...createCardDesignProfile(getCardDesignDefaults(this.settings)),
@@ -480,6 +492,7 @@ export default class TTRPGCardForgePlugin extends Plugin {
 			defaultCardTheme: savedDesignDefaults.theme,
 			defaultArtworkSize: savedDesignDefaults.artworkSize,
 			defaultCardDensity: savedDesignDefaults.density,
+			printExport: normalizePrintExportSettings(saved?.printExport),
 		};
 		return {
 			printQueue: saved?.printQueue,

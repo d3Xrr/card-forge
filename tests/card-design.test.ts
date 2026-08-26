@@ -5,6 +5,8 @@ import {
 	clearCardDesignFieldVisibility,
 	createCardDesignFingerprint,
 	createCardDesignProfile,
+	createBackVisualDesignFingerprint,
+	createFrontVisualDesignFingerprint,
 	createLayoutDesignFingerprint,
 	createVisualDesignFingerprint,
 	isCardDesignFieldVisible,
@@ -41,6 +43,7 @@ void test('normalizes the bounded profile and rejects arbitrary presentation dat
 		fieldVisibility: { weight: false, cost: true, title: false },
 		css: 'display:none',
 	}), {
+		...createCardDesignProfile(),
 		theme: 'light',
 		artworkSize: 'larger',
 		density: 'compact',
@@ -75,6 +78,54 @@ void test('layout and visual fingerprints separate geometry from theme pixels', 
 	assert.notEqual(
 		createLayoutDesignFingerprint(dark),
 		createLayoutDesignFingerprint({ ...dark, artworkSize: 'minimal' }),
+	);
+});
+
+void test('0.8 framing and back state normalize, persist, and reject unsafe image paths', () => {
+	const design = normalizeCardDesignProfile({
+		frontArtworkFraming: { fitMode: 'fill', zoom: 1.75, panX: 25, panY: -30 },
+		back: {
+			style: 'custom-image',
+			customArtworkPath: 'Card Forge Assets/custom-back.png',
+			artworkFraming: { fitMode: 'fill', zoom: 2, panX: -12, panY: 44 },
+		},
+	});
+	assert.equal(design.frontArtworkFraming.fitMode, 'fill');
+	assert.equal(design.back.customArtworkPath, 'Card Forge Assets/custom-back.png');
+	assert.deepEqual(normalizeCardDesignProfile(JSON.parse(JSON.stringify(design))), design);
+	assert.equal(normalizeCardDesignProfile({
+		back: { style: 'custom-image', customArtworkPath: 'C:\\private\\back.png' },
+	}).back.customArtworkPath, undefined);
+	assert.equal(normalizeCardDesignProfile({
+		back: { style: 'custom-image', customArtworkPath: '../back.png' },
+	}).back.customArtworkPath, undefined);
+});
+
+void test('framing is raster-only and front/back pixel identities remain independent', () => {
+	const baseline = createCardDesignProfile();
+	const frontFramed = normalizeCardDesignProfile({
+		...baseline,
+		frontArtworkFraming: { fitMode: 'fill', zoom: 1.4, panX: 20, panY: 0 },
+	});
+	const backed = normalizeCardDesignProfile({
+		...baseline,
+		back: { style: 'rarity' },
+	});
+	assert.equal(
+		createLayoutDesignFingerprint(baseline),
+		createLayoutDesignFingerprint(frontFramed),
+	);
+	assert.notEqual(
+		createFrontVisualDesignFingerprint(baseline),
+		createFrontVisualDesignFingerprint(frontFramed),
+	);
+	assert.equal(
+		createFrontVisualDesignFingerprint(baseline),
+		createFrontVisualDesignFingerprint(backed),
+	);
+	assert.notEqual(
+		createBackVisualDesignFingerprint(baseline),
+		createBackVisualDesignFingerprint(backed),
 	);
 });
 

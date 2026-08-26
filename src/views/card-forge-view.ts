@@ -10,6 +10,7 @@ import {
 
 import { PdfExportService, type PdfExportProgress } from '../export/pdf-export-service';
 import { A4_CARDS_PER_SHEET } from '../export/a4-sheet-geometry';
+import { planPrintSheets } from '../export/duplex-sheet-planner';
 import type { ItemCardData } from '../models/item';
 import type { ItemCardPage } from '../models/item-card-page';
 import {
@@ -32,7 +33,11 @@ import {
 	LEGACY_CARD_DESIGN_PROFILE,
 	normalizeCardDesignProfile,
 	setCardDesignFieldVisibility,
+	createDefaultArtworkFraming,
+	createDefaultCardBackDesign,
+	type ArtworkFraming,
 	type CardArtworkSize,
+	type CardBackStyle,
 	type CardDensity,
 	type CardDesignField,
 	type CardDesignProfile,
@@ -55,10 +60,12 @@ import {
 	type ArtworkLoadResult,
 	type RenderedItemCard,
 } from '../renderer/item-card-renderer';
+import { CardBackRenderer } from '../renderer/card-back-renderer';
 import { formatSourceDisplay } from '../renderer/source-formatter';
 import {
 	isSupportedArtworkPath,
 	resolveArtworkDescriptor,
+	resolveVaultArtworkDescriptor,
 } from '../services/artwork-resolver';
 import { ArtworkImporter } from '../services/artwork-importer';
 import {
@@ -124,6 +131,13 @@ import {
 	type CardForgeSettings,
 } from '../settings';
 import {
+	normalizePrintExportSettings,
+	type BackExportMode,
+	type DuplexOrientation,
+	type PrintExportSettings,
+	type PrintMode,
+} from '../models/print-export-settings';
+import {
 	type PlanningCacheStatus,
 	PlanningPerformanceMonitor,
 } from '../services/planning-performance';
@@ -180,6 +194,7 @@ export const LAYOUT_UPDATE_STATUS_MESSAGE = 'Updating card layout…';
 export const LAYOUT_UPDATE_FEEDBACK_DELAY_MS = 150;
 const PHYSICAL_PLAN_RENDER_SETTINGS_FINGERPRINT = 'card-render-settings-v6-stat-packing';
 type WorkflowMode = 'queue' | 'saved-sets' | 'exports';
+type CardSide = 'front' | 'back';
 
 interface PhysicalPlanLookup {
 	identity: PhysicalPlanCacheIdentity;
@@ -195,6 +210,7 @@ interface PhysicalPlanLookup {
 export class CardForgeView extends ItemView {
 	private readonly artworkBounds = new ArtworkBoundsService();
 	private readonly cardRenderer = new ItemCardRenderer(this.artworkBounds);
+	private readonly cardBackRenderer = new CardBackRenderer(this.artworkBounds);
 	private readonly cardFitService = new ItemCardFitService(
 		this.cardRenderer,
 		this.artworkBounds,
@@ -234,6 +250,8 @@ export class CardForgeView extends ItemView {
 	private editModeButton: HTMLButtonElement | null = null;
 	private designModeButton: HTMLButtonElement | null = null;
 	private sourceModeButton: HTMLButtonElement | null = null;
+	private previewFrontButton: HTMLButtonElement | null = null;
+	private previewBackButton: HTMLButtonElement | null = null;
 	private previewIndicatorElement: HTMLElement | null = null;
 	private queueListElement: HTMLElement | null = null;
 	private queueSummaryElement: HTMLElement | null = null;
@@ -270,6 +288,8 @@ export class CardForgeView extends ItemView {
 	private currentQueuePlan: ResolvedPrintQueueEntry[] = [];
 	private currentPageIndex = 0;
 	private currentSheetIndex = 0;
+	private previewSide: CardSide = 'front';
+	private designSide: CardSide = 'front';
 	private unfitPageIndexes: ReadonlySet<number> = new Set<number>();
 	private currentArtworkResourcePath: string | undefined;
 	private currentArtworkRevisionFingerprint: string | undefined;
@@ -310,6 +330,9 @@ export class CardForgeView extends ItemView {
 		private readonly physicalPlanCache: PhysicalPlanCache<FittedItemCardPlan>,
 		private readonly planningPerformance: PlanningPerformanceMonitor,
 		private readonly temporaryArtworkStore: TemporaryArtworkStore,
+		private readonly updatePrintExportSettings: (
+			settings: Readonly<PrintExportSettings>,
+		) => Promise<void>,
 	) {
 		super(leaf);
 		this.pdfExportService = new PdfExportService(this.app, this.cardRenderer);
@@ -655,6 +678,18 @@ export class CardForgeView extends ItemView {
 			text: 'Source note',
 			attr: { type: 'button', 'aria-pressed': 'false' },
 		});
+		const sideToggle = previewToolbar.createDiv({
+			cls: 'ttrpg-card-forge__side-toggle',
+			attr: { role: 'group', 'aria-label': 'Preview card side' },
+		});
+		this.previewFrontButton = sideToggle.createEl('button', {
+			text: 'Front',
+			attr: { type: 'button', 'aria-pressed': 'true' },
+		});
+		this.previewBackButton = sideToggle.createEl('button', {
+			text: 'Back',
+			attr: { type: 'button', 'aria-pressed': 'false' },
+		});
 		this.pageNavigationElement = previewToolbar.createDiv({
 			cls: 'ttrpg-card-forge__page-navigation',
 			attr: { 'aria-label': 'Card page navigation' },
@@ -679,6 +714,8 @@ export class CardForgeView extends ItemView {
 		this.registerDomEvent(this.editModeButton, 'click', () => this.setPreviewMode('edit'));
 		this.registerDomEvent(this.designModeButton, 'click', () => this.setPreviewMode('design'));
 		this.registerDomEvent(this.sourceModeButton, 'click', () => this.setPreviewMode('source-note'));
+		this.registerDomEvent(this.previewFrontButton, 'click', () => this.setPreviewSide('front'));
+		this.registerDomEvent(this.previewBackButton, 'click', () => this.setPreviewSide('back'));
 		const previewContent = preview.createDiv({
 			cls: 'ttrpg-card-forge__preview-content',
 		});
@@ -768,6 +805,7 @@ export class CardForgeView extends ItemView {
 		});
 		this.queueSummaryElement = this.workflowQueueElement.createDiv({ cls: 'ttrpg-card-forge__queue-summary' });
 		this.queueListElement = this.workflowQueueElement.createDiv({ cls: 'ttrpg-card-forge__queue-list' });
+		this.buildPrintControls(this.workflowQueueElement);
 
 		const sheetPreview = this.workflowQueueElement.createDiv({ cls: 'ttrpg-card-forge__sheet-preview' });
 		const sheetNavigation = sheetPreview.createDiv({ cls: 'ttrpg-card-forge__sheet-navigation' });
@@ -803,6 +841,89 @@ export class CardForgeView extends ItemView {
 		this.workflowAuxElement = queue.createDiv({ cls: 'ttrpg-card-forge__workflow-aux' });
 		this.workflowAuxElement.hidden = true;
 		this.updateWorkflowModePresentation();
+	}
+
+	private buildPrintControls(container: HTMLElement): void {
+		const panel = container.createDiv({
+			cls: 'ttrpg-card-forge__print-controls',
+			attr: { 'aria-label': 'Print and duplex settings' },
+		});
+		panel.createEl('h4', { text: 'Printing', cls: 'ttrpg-card-forge__design-heading' });
+		const settings = normalizePrintExportSettings(this.getSettings().printExport);
+		this.appendPrintSelect<PrintMode>(panel, 'Print mode', settings.printMode, {
+			'single-sided': 'Single-sided',
+			'manual-duplex': 'Manual duplex',
+			'automatic-duplex': 'Automatic duplex',
+		}, (printMode) => { void this.changePrintSettings({ printMode }); });
+		this.appendPrintSelect<BackExportMode>(panel, 'Backs', settings.backMode, {
+			'no-backs': 'No backs',
+			'use-card-backs': 'Use card back designs',
+		}, (backMode) => { void this.changePrintSettings({ backMode }); });
+		this.appendPrintSelect<DuplexOrientation>(
+			panel,
+			'Duplex edge',
+			settings.duplexOrientation,
+			{ 'long-edge': 'Long edge', 'short-edge': 'Short edge' },
+			(duplexOrientation) => {
+				void this.changePrintSettings({ duplexOrientation });
+			},
+		);
+		const calibration = panel.createDiv({ cls: 'ttrpg-card-forge__calibration-controls' });
+		this.appendPrintNumber(calibration, 'Back X (mm)', settings.backOffsetXmm, (backOffsetXmm) => {
+			void this.changePrintSettings({ backOffsetXmm });
+		});
+		this.appendPrintNumber(calibration, 'Back Y (mm)', settings.backOffsetYmm, (backOffsetYmm) => {
+			void this.changePrintSettings({ backOffsetYmm });
+		});
+		panel.createDiv({
+			cls: 'ttrpg-card-forge__print-help',
+			text: 'Positive X moves backs right; positive Y moves backs down. Calibration never changes card geometry.',
+		});
+	}
+
+	private appendPrintSelect<T extends string>(
+		container: HTMLElement,
+		label: string,
+		value: T,
+		options: Readonly<Record<T, string>>,
+		onChange: (value: T) => void,
+	): void {
+		const control = container.createEl('label', { cls: 'ttrpg-card-forge__print-control' });
+		control.createSpan({ text: label });
+		const select = control.createEl('select', { attr: { 'aria-label': label } });
+		for (const [optionValue, optionLabel] of Object.entries(options)) {
+			select.createEl('option', { value: optionValue, text: String(optionLabel) });
+		}
+		select.value = value;
+		select.addEventListener('change', () => onChange(select.value as T));
+	}
+
+	private appendPrintNumber(
+		container: HTMLElement,
+		label: string,
+		value: number,
+		onChange: (value: number) => void,
+	): void {
+		const control = container.createEl('label', { cls: 'ttrpg-card-forge__print-control' });
+		control.createSpan({ text: label });
+		const input = control.createEl('input', {
+			type: 'number',
+			attr: { min: '-10', max: '10', step: '0.1', 'aria-label': label },
+		});
+		input.value = String(value);
+		input.addEventListener('change', () => onChange(input.valueAsNumber));
+	}
+
+	private async changePrintSettings(
+		patch: Partial<PrintExportSettings>,
+	): Promise<void> {
+		const next = normalizePrintExportSettings({
+			...this.getSettings().printExport,
+			...patch,
+		});
+		await this.updatePrintExportSettings(next);
+		this.currentSheetIndex = 0;
+		this.renderSheetPreview();
 	}
 
 	private createWorkflowModeButton(
@@ -1473,6 +1594,17 @@ export class CardForgeView extends ItemView {
 		}
 	}
 
+	private setPreviewSide(side: CardSide): void {
+		this.previewSide = side;
+		this.previewFrontButton?.toggleClass('is-active', side === 'front');
+		this.previewBackButton?.toggleClass('is-active', side === 'back');
+		this.previewFrontButton?.setAttribute('aria-pressed', String(side === 'front'));
+		this.previewBackButton?.setAttribute('aria-pressed', String(side === 'back'));
+		if (this.previewPages.length > 0 && this.previewMode !== 'source-note') {
+			this.renderCurrentPage();
+		}
+	}
+
 	private resetEditorSession(): void {
 		this.draftOverrides = undefined;
 		this.appliedOverrides = undefined;
@@ -1487,6 +1619,12 @@ export class CardForgeView extends ItemView {
 		this.artworkVaultPathDraft = undefined;
 		this.artworkHttpsUrl = '';
 		this.persistArtworkToVault = false;
+		this.previewSide = 'front';
+		this.designSide = 'front';
+		this.previewFrontButton?.toggleClass('is-active', true);
+		this.previewBackButton?.toggleClass('is-active', false);
+		this.previewFrontButton?.setAttribute('aria-pressed', 'true');
+		this.previewBackButton?.setAttribute('aria-pressed', 'false');
 		this.syncDraftTemporaryArtworkReferences();
 	}
 
@@ -1502,6 +1640,10 @@ export class CardForgeView extends ItemView {
 		this.sourceNoteElement?.toggleAttribute('hidden', !modeState.showSourceNote);
 		this.previewActionsElement?.toggleAttribute('hidden', !modeState.showGlobalPreviewActions);
 		this.previewIndicatorElement?.toggleAttribute('hidden', modeState.showSourceNote);
+		this.previewFrontButton?.parentElement?.toggleAttribute(
+			'hidden',
+			modeState.showSourceNote,
+		);
 		this.previewElement?.toggleClass(
 			'is-editing',
 			modeState.showEditor || modeState.showDesign,
@@ -1732,6 +1874,12 @@ export class CardForgeView extends ItemView {
 			this.draftOverrides,
 		);
 		const design = this.getCurrentDraftDesign();
+		this.appendDesignSideSelector();
+		if (this.designSide === 'back') {
+			this.renderBackDesignControls(effective.item, design);
+			this.appendDesignPanelActions();
+			return;
+		}
 
 		this.appendDesignGroupHeading('Card style');
 		this.appendDesignSelect<CardTheme>('Theme', design.theme, {
@@ -1749,6 +1897,15 @@ export class CardForgeView extends ItemView {
 		}, (artworkSize) => this.updateDesignDraft((draft) => {
 			draft.artworkSize = artworkSize;
 		}), 'Larger prioritizes prominent artwork and may use additional card pages.');
+		if (design.artworkSize !== 'hidden') {
+			this.appendArtworkFramingControls(
+				'Front artwork framing',
+				design.frontArtworkFraming,
+				(framing) => this.updateDesignDraft((draft) => {
+					draft.frontArtworkFraming = framing;
+				}),
+			);
+		}
 
 		this.appendDesignGroupHeading('Information');
 		this.appendDesignSelect<CardDensity>('Density', design.density, {
@@ -1805,6 +1962,155 @@ export class CardForgeView extends ItemView {
 			});
 		}
 
+		this.appendDesignPanelActions();
+	}
+
+	private appendDesignSideSelector(): void {
+		if (!this.designElement) {
+			return;
+		}
+		const toggle = this.designElement.createDiv({
+			cls: 'ttrpg-card-forge__side-toggle ttrpg-card-forge__design-side-toggle',
+			attr: { role: 'group', 'aria-label': 'Design card side' },
+		});
+		for (const side of ['front', 'back'] as const) {
+			const button = toggle.createEl('button', {
+				text: side === 'front' ? 'Front' : 'Back',
+				attr: { type: 'button', 'aria-pressed': String(this.designSide === side) },
+			});
+			button.toggleClass('is-active', this.designSide === side);
+			button.addEventListener('click', () => {
+				this.designSide = side;
+				this.setPreviewSide(side);
+				this.renderEditor();
+			});
+		}
+	}
+
+	private renderBackDesignControls(
+		item: ItemCardData,
+		design: Readonly<CardDesignProfile>,
+	): void {
+		if (!this.designElement) {
+			return;
+		}
+		this.appendDesignGroupHeading('Card back');
+		this.appendDesignSelect<CardBackStyle>('Style', design.back.style, {
+			none: 'None',
+			generic: 'Generic',
+			rarity: 'Rarity',
+			'item-type': 'Item Type',
+			artwork: 'Artwork',
+			'custom-image': 'Custom Image',
+		}, (style) => this.updateDesignDraft((draft) => {
+			draft.back.style = style;
+		}), 'The back is one logical-card design and is reused for continuation pages.');
+		this.designElement.createDiv({
+			cls: 'ttrpg-card-forge__design-help',
+			text: `Theme: Match front (${humanizeSlug(design.theme)})`,
+		});
+
+		if (design.back.style === 'custom-image') {
+			const row = this.designElement.createDiv({ cls: 'ttrpg-card-forge__design-select' });
+			row.createEl('label', { text: 'Vault image' });
+			const input = row.createEl('input', {
+				type: 'text',
+				attr: {
+					placeholder: 'Card Forge Assets/card-back.png',
+					'aria-label': 'Custom back vault image path',
+				},
+			});
+			input.value = design.back.customArtworkPath ?? '';
+			input.addEventListener('change', () => this.updateDesignDraft((draft) => {
+				draft.back.customArtworkPath = input.value.trim();
+			}));
+			const descriptor = design.back.customArtworkPath
+				? resolveVaultArtworkDescriptor(this.app, design.back.customArtworkPath, item.filePath)
+				: undefined;
+			this.designElement.createDiv({
+				cls: `ttrpg-card-forge__design-help${descriptor ? '' : ' is-warning'}`,
+				text: descriptor
+					? 'Custom back image is available.'
+					: 'Choose a supported vault-relative image before export.',
+			});
+		}
+
+		if (design.back.style === 'artwork' || design.back.style === 'custom-image') {
+			this.appendArtworkFramingControls(
+				'Back artwork framing',
+				design.back.artworkFraming,
+				(framing) => this.updateDesignDraft((draft) => {
+					draft.back.artworkFraming = framing;
+				}),
+			);
+		}
+	}
+
+	private appendArtworkFramingControls(
+		heading: string,
+		framing: Readonly<ArtworkFraming>,
+		onChange: (framing: ArtworkFraming) => void,
+	): void {
+		if (!this.designElement) {
+			return;
+		}
+		this.appendDesignGroupHeading(heading);
+		this.appendDesignSelect<'fit' | 'fill'>('Fit', framing.fitMode, {
+			fit: 'Fit',
+			fill: 'Fill',
+		}, (fitMode) => onChange({ ...framing, fitMode }));
+		this.appendFramingRange('Zoom', framing.zoom, 1, 3, 0.05, (zoom) => {
+			onChange({ ...framing, zoom });
+		});
+		this.appendFramingRange('Position X', framing.panX, -100, 100, 1, (panX) => {
+			onChange({ ...framing, panX });
+		});
+		this.appendFramingRange('Position Y', framing.panY, -100, 100, 1, (panY) => {
+			onChange({ ...framing, panY });
+		});
+		const reset = this.designElement.createEl('button', {
+			text: 'Reset framing',
+			attr: { type: 'button' },
+		});
+		reset.addEventListener('click', () => onChange(createDefaultArtworkFraming()));
+	}
+
+	private appendFramingRange(
+		label: string,
+		value: number,
+		minimum: number,
+		maximum: number,
+		step: number,
+		onChange: (value: number) => void,
+	): void {
+		if (!this.designElement) {
+			return;
+		}
+		const control = this.designElement.createEl('label', {
+			cls: 'ttrpg-card-forge__framing-control',
+		});
+		control.createSpan({ text: label });
+		const slider = control.createEl('input', {
+			type: 'range',
+			attr: {
+				min: String(minimum),
+				max: String(maximum),
+				step: String(step),
+				'aria-label': label,
+			},
+		});
+		slider.value = String(value);
+		const output = control.createEl('output', { text: String(value) });
+		slider.addEventListener('input', () => {
+			output.setText(String(slider.valueAsNumber));
+		});
+		slider.addEventListener('change', () => onChange(slider.valueAsNumber));
+	}
+
+	private appendDesignPanelActions(): void {
+		if (!this.designElement) {
+			return;
+		}
 		const actions = this.designElement.createDiv({
 			cls: 'ttrpg-card-forge__editor-actions ttrpg-card-forge__design-actions',
 		});
@@ -1814,7 +2120,12 @@ export class CardForgeView extends ItemView {
 		} else {
 			this.appendDesignAction(actions, 'Add to print queue', true, () => this.addSelectedToQueue());
 		}
-		this.appendDesignAction(actions, 'Reset design', false, () => this.resetDesignChanges());
+		this.appendDesignAction(
+			actions,
+			this.designSide === 'front' ? 'Reset front design' : 'Reset back design',
+			false,
+			() => this.resetDesignChanges(),
+		);
 	}
 
 	private appendDesignGroupHeading(label: string): void {
@@ -2223,11 +2534,25 @@ export class CardForgeView extends ItemView {
 	}
 
 	private resetDesignChanges(): void {
-		this.draftDesign = createCardDesignProfile(
+		const defaults = createCardDesignProfile(
 			getCardDesignDefaults(this.getSettings()),
 		);
+		const current = this.getCurrentDraftDesign();
+		this.draftDesign = this.designSide === 'back'
+			? normalizeCardDesignProfile({
+				...current,
+				back: createDefaultCardBackDesign(),
+			})
+			: normalizeCardDesignProfile({
+				...defaults,
+				back: current.back,
+			});
 		this.renderEditor();
-		this.scheduleEditorPreview();
+		if (this.designSide === 'back') {
+			this.renderPreview(true);
+		} else {
+			this.scheduleEditorPreview();
+		}
 	}
 
 	private scheduleEditorPreview(): void {
@@ -2817,24 +3142,34 @@ export class CardForgeView extends ItemView {
 		const physicalHost = viewport.createDiv({ cls: 'ttrpg-card-forge__scaled-card' });
 		applyCanonicalCardSize(physicalHost);
 		const renderTrace = this.planningPerformance.start(page.item.name, 'preview-render');
+		const renderFront = () => this.cardRenderer.render(
+			physicalHost,
+			page,
+			this.currentArtworkResourcePath,
+			this.currentArtworkRevisionFingerprint,
+			this.currentPreviewDesign,
+		);
+		const renderBack = () => {
+			const artwork = this.resolveBackArtwork(
+				page,
+				this.currentPreviewDesign,
+				this.currentArtworkResourcePath,
+				this.currentArtworkRevisionFingerprint,
+			);
+			return this.cardBackRenderer.render(
+				physicalHost,
+				page,
+				artwork?.resourcePath,
+				artwork?.revisionFingerprint,
+				this.currentPreviewDesign,
+			);
+		};
 		const rendered = renderTrace
 			? renderTrace.measure(
 				'previewRendering',
-				() => this.cardRenderer.render(
-					physicalHost,
-					page,
-					this.currentArtworkResourcePath,
-					this.currentArtworkRevisionFingerprint,
-					this.currentPreviewDesign,
-				),
+				this.previewSide === 'front' ? renderFront : renderBack,
 			)
-			: this.cardRenderer.render(
-				physicalHost,
-				page,
-				this.currentArtworkResourcePath,
-				this.currentArtworkRevisionFingerprint,
-				this.currentPreviewDesign,
-			);
+			: this.previewSide === 'front' ? renderFront() : renderBack();
 		void rendered.artworkReady.finally(() => renderTrace?.finish({
 			pageCount: page.pageCount,
 		}));
@@ -2847,12 +3182,43 @@ export class CardForgeView extends ItemView {
 			viewport.style.height = `${PHYSICAL_CARD_PROFILE.heightPx * scale}px`;
 		};
 		scalePhysicalCard();
-		this.renderDiagnostics(
-			page,
-			rendered,
-			this.currentArtworkResourcePath,
-			pageRenderGeneration,
-			scalePhysicalCard,
+		if (this.previewSide === 'front') {
+			this.renderDiagnostics(
+				page,
+				rendered as RenderedItemCard,
+				this.currentArtworkResourcePath,
+				pageRenderGeneration,
+				scalePhysicalCard,
+			);
+		} else if (this.diagnosticsElement) {
+			this.diagnosticsElement.empty();
+			this.diagnosticsElement.createSpan({
+				text: `Back preview · ${humanizeSlug(this.currentPreviewDesign.back.style)}`,
+			});
+		}
+	}
+
+	private resolveBackArtwork(
+		page: ItemCardPage,
+		design: Readonly<CardDesignProfile>,
+		frontResourcePath?: string,
+		frontRevisionFingerprint?: string,
+	): { resourcePath: string; revisionFingerprint?: string } | undefined {
+		if (design.back.style === 'artwork') {
+			return frontResourcePath
+				? {
+					resourcePath: frontResourcePath,
+					...(frontRevisionFingerprint ? { revisionFingerprint: frontRevisionFingerprint } : {}),
+				}
+				: undefined;
+		}
+		if (design.back.style !== 'custom-image' || !design.back.customArtworkPath) {
+			return undefined;
+		}
+		return resolveVaultArtworkDescriptor(
+			this.app,
+			design.back.customArtworkPath,
+			page.item.filePath,
 		);
 	}
 
@@ -3174,17 +3540,21 @@ export class CardForgeView extends ItemView {
 			return;
 		}
 		const cards = flattenPrintQueue(this.currentQueuePlan);
-		const sheetCount = Math.ceil(cards.length / A4_CARDS_PER_SHEET);
+		const sheets = planPrintSheets(cards, this.getSettings().printExport);
+		const sheetCount = sheets.length;
 		this.currentSheetIndex = Math.min(this.currentSheetIndex, Math.max(0, sheetCount - 1));
-		this.sheetLabelElement.setText(sheetCount ? `Sheet ${this.currentSheetIndex + 1} / ${sheetCount}` : 'No sheets');
+		const sheet = sheets[this.currentSheetIndex];
+		this.sheetLabelElement.setText(sheet
+			? `Sheet ${this.currentSheetIndex + 1} / ${sheetCount} · ${sheet.side === 'front' ? 'Front' : 'Back'} ${sheet.sourceSheetIndex + 1}`
+			: 'No sheets');
 		this.previousSheetButton.disabled = this.currentSheetIndex <= 0;
 		this.nextSheetButton.disabled = this.currentSheetIndex >= sheetCount - 1;
 		this.sheetGridElement.empty();
-		const start = this.currentSheetIndex * A4_CARDS_PER_SHEET;
 		for (let slot = 0; slot < A4_CARDS_PER_SHEET; slot += 1) {
-			const card = cards[start + slot];
+			const plannedSlot = sheet?.slots[slot];
+			const card = plannedSlot?.card;
 			const host = this.sheetGridElement.createDiv({ cls: 'ttrpg-card-forge__sheet-slot' });
-			if (card) {
+			if (card && sheet?.side === 'front') {
 				this.cardRenderer.render(
 					host,
 					card.page,
@@ -3192,8 +3562,26 @@ export class CardForgeView extends ItemView {
 					card.artworkRevisionFingerprint,
 					card.design,
 				);
+			} else if (card && sheet?.side === 'back' && plannedSlot.render) {
+				const artwork = this.resolveBackArtwork(
+					card.page,
+					card.design,
+					card.artworkResourcePath,
+					card.artworkRevisionFingerprint,
+				);
+				this.cardBackRenderer.render(
+					host,
+					card.page,
+					artwork?.resourcePath,
+					artwork?.revisionFingerprint,
+					card.design,
+				);
 			} else {
 				host.addClass('is-empty');
+				if (card) {
+					host.addClass('is-no-back');
+					host.setAttribute('aria-label', `${card.itemName} has no printed back`);
+				}
 			}
 		}
 	}
@@ -3235,14 +3623,15 @@ export class CardForgeView extends ItemView {
 				{
 					exportFolder: settings.pdfExportFolder,
 					showCropMarks: settings.showCropMarks,
+					printSettings: settings.printExport,
 					onProgress: (progress) => this.renderExportProgress(progress),
 				},
 			);
 			this.lastPdfFile = result.file;
 			this.queueStatusElement.setText(
-				`Saved ${result.fileName} · ${result.physicalCardCount} physical cards · ${result.a4PageCount} A4 pages`,
+				`Saved ${result.fileName} · ${result.physicalCardCount} fronts · ${result.backCardCount} backs · ${result.a4PageCount} A4 pages`,
 			);
-			new Notice(`Saved ${result.fileName}: ${result.physicalCardCount} physical cards on ${result.a4PageCount} A4 pages.`);
+			new Notice(`Saved ${result.fileName}: ${result.physicalCardCount} fronts and ${result.backCardCount} backs on ${result.a4PageCount} A4 pages.`);
 			if (this.workflowMode === 'exports') {
 				await this.renderExportGallery();
 			}

@@ -28,15 +28,31 @@ export function resolveArtworkFile(app: App, item: ItemCardData): TFile | null {
 	if (!item.imagePath) {
 		return null;
 	}
+	return resolveVaultArtworkFile(app, item.imagePath, item.filePath);
+}
 
-	const imagePath = normalizeVaultPath(item.imagePath);
+export function resolveVaultArtworkFile(
+	app: App,
+	vaultPath: string,
+	sourcePath = '',
+): TFile | null {
+	const imagePath = normalizeVaultPath(vaultPath);
 	const exactFile = app.vault.getFileByPath(imagePath);
 	if (exactFile && isSupportedArtworkFile(exactFile)) {
 		return exactFile;
 	}
 
-	const linkedFile = app.metadataCache.getFirstLinkpathDest(imagePath, item.filePath);
+	const linkedFile = app.metadataCache.getFirstLinkpathDest(imagePath, sourcePath);
 	return linkedFile && isSupportedArtworkFile(linkedFile) ? linkedFile : null;
+}
+
+export function resolveVaultArtworkDescriptor(
+	app: App,
+	vaultPath: string,
+	sourcePath = '',
+): ResolvedArtworkDescriptor | undefined {
+	const file = resolveVaultArtworkFile(app, vaultPath, sourcePath);
+	return file ? createResolvedArtworkDescriptor(app, file) : undefined;
 }
 
 export function getArtworkResourcePath(app: App, item: ItemCardData): string | undefined {
@@ -51,6 +67,13 @@ export function resolveArtworkDescriptor(
 	if (!file) {
 		return undefined;
 	}
+	return createResolvedArtworkDescriptor(app, file);
+}
+
+function createResolvedArtworkDescriptor(
+	app: App,
+	file: TFile,
+): ResolvedArtworkDescriptor {
 	const revision = {
 		filePath: file.path,
 		modifiedTime: file.stat.mtime,

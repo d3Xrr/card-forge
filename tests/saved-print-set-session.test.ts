@@ -11,6 +11,7 @@ import {
 	getSavedPrintSetLoadRisk,
 	SavedPrintSetSession,
 } from '../src/services/saved-print-set-session';
+import { createCardDesignProfile } from '../src/models/card-design';
 
 function createQueue(prefix = 'queue'): PrintQueueService {
 	let id = 1;
@@ -80,7 +81,7 @@ void test('canonical fingerprint treats missing legacy design as explicit legacy
 	const explicit = [{
 		filePath: 'items/a.md',
 		quantity: 1,
-		design: { theme: 'dark' as const, artworkSize: 'standard' as const, density: 'standard' as const },
+		design: createCardDesignProfile(),
 	}];
 	assert.equal(
 		createSavedPrintSetQueueFingerprint(legacy),

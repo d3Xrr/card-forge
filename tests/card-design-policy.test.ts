@@ -15,8 +15,10 @@ import {
 	chooseArtworkPriorityFit,
 	findBestAdaptiveBodyFit,
 } from '../src/renderer/item-card-fit-service';
+import { createCardDesignProfile } from '../src/models/card-design';
 
 const baseDesign = {
+	...createCardDesignProfile(),
 	theme: 'dark' as const,
 	artworkSize: 'standard' as const,
 	density: 'standard' as const,
