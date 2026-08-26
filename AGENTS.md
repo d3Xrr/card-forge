@@ -6,6 +6,8 @@ TTRPG Card Forge is an Obsidian desktop plugin that creates printable item cards
 
 The plugin ID is permanently `ttrpg-card-forge`. Do not rename it. Phase 4B owns non-destructive print overrides, same-note variant resolution, manual card boundaries, session-only artwork, and optional managed artwork imports. Phase 4D owns Saved Print Set snapshots, current-item commands, queue duplication, and the lightweight vault Export Gallery.
 
+Phase 6 owns bounded artwork framing inside planner-owned boxes, logical per-card back designs, deterministic front/back A4 side planning, and print-job-only duplex/calibration settings. Back designs remain part of `CardDesignProfile`; duplex mode, edge mapping, and X/Y calibration must not enter card content or physical pagination.
+
 ## Architecture
 
 - `src/main.ts`: plugin lifecycle, commands, view registration, settings, and persisted queue and Saved Print Set state.
@@ -62,6 +64,19 @@ Overrides belong to queue entries and plugin data, never source Markdown. `///CA
 Editable fields use inheritance by absence: an absent field follows the current source/variant default, while a present field is an explicit print override. Variant changes must preserve explicit fields and refresh inherited fields. Temporary artwork stores only a lightweight runtime identifier in plugin data; Blob/ObjectURL bytes stay in memory, are owner-tracked, and are revoked when no draft or queue entry references them. Explicit Saved Set Save/Save As must persist currently available temporary artwork through the managed Vault API and promote matching live queue references to the resulting vault-relative override. Missing temporary artwork blocks a new Saved Set save. Persist only the active Saved Set ID; on load, validate the referenced set and derive clean/Modified state from canonical queue-versus-set snapshots.
 
 PDF code must never own or reproduce item-content pagination. It consumes completed `ItemCardPage[]` from the canonical physical planner. The existing card renderer remains the visual source of truth; do not redraw card content with PDF primitives.
+
+The Phase 6 export flow is:
+
+```text
+completed PhysicalQueueCard fronts
+→ pure fixed-slot front/back sheet plan
+→ front or bounded back DOM renderer
+→ separate deterministic front/back raster identities
+→ optional back-only X/Y PDF placement correction
+→ existing exact A4 PDF assembly and Vault storage
+```
+
+Artwork framing may change pixels inside the fixed artwork box but must not change its planner-owned allocation. `None` backs remain blank occupied duplex positions, not removed cards. Single-sided back sheets are unmirrored; duplex backs use the documented landscape edge mapping. Seamless sheet backs and named calibration profiles are deferred.
 
 ## Physical print invariants
 

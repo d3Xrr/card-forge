@@ -2,7 +2,7 @@
 
 TTRPG Card Forge is a desktop Obsidian plugin for turning structured item notes already stored in a user's vault into printable TTRPG cards. It indexes TTRPG CLI/5etools-style item Markdown, renders deterministic physical cards, and exports print-ready A4 PDF sheets without uploading vault content.
 
-Phase 4D connects non-destructive live editing, batch queue building, reusable Saved Print Sets, and a lightweight Export Gallery around the deterministic physical planner and local PDF export. Spells, feats, monsters, and other card types are not implemented yet.
+The 0.8.0 development build adds bounded front/back artwork framing, per-card back designs, and deterministic single-sided, manual-duplex, and automatic-duplex PDF workflows around the existing physical planner. Spells, feats, monsters, and other card types are not implemented yet.
 
 ## Current features
 
@@ -14,6 +14,8 @@ Phase 4D connects non-destructive live editing, batch queue building, reusable S
 - Scales the already-planned physical card for the visible preview, so pane width no longer determines its page count.
 - Provides a searchable, filterable, multi-select item browser, read-only Source Note mode, page navigation, and fit diagnostics.
 - Provides responsive **Preview** and **Edit** modes with debounced canonical replanning while the last completed preview stays visible.
+- Adds a bounded **Design** side selector and explicit **Front | Back** preview. Front artwork can use Fit/Fill, 1–3× zoom, and bounded X/Y positioning inside the fixed planner-owned artwork box.
+- Stores a logical card back with each design snapshot. Back styles are **None**, **Generic**, **Rarity**, **Item Type**, **Artwork**, and vault-relative **Custom Image**; back artwork uses the same bounded framing model and inherits the front theme.
 - Supports print-only overrides for title, type, rarity, attunement, rules Markdown, structured statistics, artwork, source text, and same-note variants.
 - Recognizes `///CARD BREAK///` on its own line as an explicit new physical-card boundary; the delimiter is never rendered.
 - Uses local files or explicitly requested HTTPS artwork as session-only ObjectURLs by default, while also supporting source art, no art, and existing vault-relative art. **Save to vault** opts into a collision-safe file under `Card Forge Assets`.
@@ -26,7 +28,9 @@ Phase 4D connects non-destructive live editing, batch queue building, reusable S
 - Keeps continuation pages together in copy order. A two-card item at quantity three becomes `1,2,1,2,1,2`.
 - Shows unique item types, total copies, physical cards, and required A4 pages.
 - Shows a simple fixed-slot A4 sheet preview with page navigation.
+- Previews the actual front/back sheet sequence selected for single-sided, manual-duplex, or automatic-duplex output. Cards with **None** backs retain their alignment position as an intentional blank.
 - Exports eight exact-size cards per A4 landscape page in a four-column by two-row grid.
+- Supports **No backs** or **Use card back designs**, landscape long-edge/short-edge duplex mapping, and bounded ±10 mm back-side X/Y registration correction. Print-job settings remain separate from card design and are persisted as plugin settings.
 - Draws optional thin crop marks outside card content; crop marks are enabled by default and no bleed is added.
 - Saves PDFs to the vault-relative `Card Forge Exports` folder by default and creates collision-safe filenames such as `card-forge-2026-08-13-1305-2.pdf`.
 - Can open the last generated PDF in Obsidian, with optional automatic opening after export.
@@ -40,7 +44,7 @@ Phase 4D connects non-destructive live editing, batch queue building, reusable S
 4. Adding the same source with equivalent overrides increments its quantity; a different override state creates a distinct entry.
 5. Use **Edit**, **Duplicate**, `+`, `−`, move-up, move-down, and remove controls to prepare the queue. Existing queue edits use **Save changes**, **Discard changes**, and **Reset to source**; reset remains a working draft until saved.
 6. Optionally choose **Save as…** to create a reusable queue template. After loading or saving one, use **Save** to update that active set without another name prompt; clean or Modified association is restored safely after restart.
-7. Inspect the physical-card count and A4 sheet preview, then choose **Export PDF**.
+7. In **Printing**, choose the print mode, whether to use card backs, the duplex edge, and optional back X/Y calibration. Inspect every Front/Back A4 side in the fixed-slot preview, then choose **Export PDF**.
 8. Open the generated PDF with **Open last PDF**, or use **Exports** to find earlier Card Forge PDFs in the configured folder.
 
 A queue entry represents copies of an item, not a single rendered page. Every copy is fully emitted before the next copy begins, so continuation and Crafting cards remain adjacent to their primary card.
@@ -58,6 +62,14 @@ Each card is drawn at exactly 63.5 × 88.9 mm. The grid uses 3 mm gaps, 17 mm le
 
 Card DOM is rasterized locally to a lossless 750 × 1050 PNG, then embedded with `pdf-lib`. Canonically equivalent physical pages reuse the same in-memory raster during one export; distinct queue-entry content and artwork retain separate raster identity. No raster cache is persisted between Obsidian sessions.
 
+### Back-side ordering
+
+- **Single-sided** emits all front sheets followed by forward-order, unmirrored back sheets. This is useful when sides are printed or handled separately.
+- **Manual duplex** emits all front sheets first, then the back pass in reverse sheet order. Back slots are mirrored by the selected edge so each back remains paired with its front during a two-pass re-feed.
+- **Automatic duplex** interleaves each front sheet with its corresponding mirrored back sheet.
+
+For A4 landscape, **Long edge** mirrors the two rows and **Short edge** mirrors the four columns. Printer feed paths vary, so first print a low-cost test sheet, select the edge that gives the correct orientation, and use the bounded back X/Y offsets for repeatable registration correction. Calibration moves only back images; crop positions and exact card geometry remain canonical.
+
 ## Settings
 
 - **Item folder** — vault-relative source folder; default `2. Mechanics/items`.
@@ -65,9 +77,11 @@ Card DOM is rasterized locally to a lossless 750 × 1050 PNG, then embedded with
 - **Show crop marks** — enabled by default.
 - **Open PDF after export** — disabled by default.
 
+Print mode, back mode, duplex edge, and back X/Y calibration are available in the Workflow panel because they describe a print job rather than a card design.
+
 ## Backlog
 
-Deferred, non-release-blocking ideas are documented in [BACKLOG.md](BACKLOG.md). They are planning notes only and are not part of Phase 4D / 0.6.0.
+Deferred, non-release-blocking ideas are documented in [BACKLOG.md](BACKLOG.md). Seamless sheet backs and named calibration profiles are deliberately not part of the bounded 0.8.0 implementation.
 
 ## Development
 

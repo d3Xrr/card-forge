@@ -2,6 +2,23 @@
 
 This file tracks completed workflow milestones and intentionally deferred work.
 
+## Implemented for 0.8.0 development
+
+- Added reusable bounded artwork framing for front and artwork-based back designs: Fit/Fill, 1–3× zoom, ±100 position controls, and side-specific reset. Framing clips inside the planner-owned box, affects raster identity only, and never changes physical-card geometry or content pagination.
+- Added back design snapshots with **None**, **Generic**, **Rarity**, **Item Type**, **Artwork**, and vault-relative **Custom Image** styles. Back theme inherits the front theme. The same logical back applies to primary, continuation, and Crafting pages.
+- Preserved back/framing state through source drafts, queue adds, batch/current-item adds, queue Save/Discard, Duplicate deep copies, restart migration, Saved Set canonical dirty state, Save/Load, A4 preview, and PDF export. Pre-0.8 data migrates to default framing with **None** back.
+- Added explicit **Front | Back** preview and a bounded side selector inside the existing Design mode; no new application mode or freeform card-layout surface was introduced.
+- Added persisted print-job settings for single-sided, manual-duplex, and automatic-duplex output; no backs/use card backs; landscape long-edge/short-edge mapping; and bounded ±10 mm back registration offsets.
+- Added a pure duplex sheet planner. Single-sided backs are forward and unmirrored; automatic backs are interleaved; manual backs follow all fronts in reverse source-sheet order. Duplex slots mirror rows for long-edge or columns for short-edge output, preserve partial-sheet positions, and retain **None** backs as intentional blank alignment slots.
+- Added separate front/back raster identities and reused completed front physical pages. Back-side calibration changes PDF placement only; it does not replan content, alter crop positions, or change canonical 63.5 × 88.9 mm / 750 × 1050 px cards.
+- Extended pure tests and the deterministic design matrix across framing bounds, back styles, legacy migration, queue/Saved Set persistence, continuation behavior, duplex ordering, partial sheets, calibration, PDF structure, UI controls, and responsive rules.
+
+### Intentionally deferred beyond 0.8.0
+
+- Seamless sheet artwork belongs to a future print-job override rather than per-card design.
+- Named printer/copyshop calibration profiles may build on the persisted current X/Y/edge settings after real printer testing.
+- Interactive drag-to-frame handles remain deferred; the conservative sliders are the supported bounded control surface.
+
 ## Implemented for 0.7.0 development
 
 - Added an explicit bounded `CardDesignProfile` that keeps theme, artwork allocation, density, and optional known-field visibility separate from source content and print overrides.
@@ -36,14 +53,14 @@ This file tracks completed workflow milestones and intentionally deferred work.
 
 - **0.6.1 — Stabilization / parser hygiene / responsive workspace.**
 - **0.7.0 — Card Presentation / Design System.** Intended scope: a Design tab; Dark, Light, and Printer Friendly presets; Standard, Larger, Minimal, and Hidden artwork sizing; bounded field visibility; and safe information-density presets. This work must avoid arbitrary CSS customization and preserve planner/fitting guarantees.
-- **0.8.0 — Duplex / card backs / printer calibration.**
+- **0.8.0 — Duplex / card backs / bounded artwork framing and printer calibration.**
 - **0.9.x — Print and workflow quality-of-life.**
 
 Post-0.9 work may include the final responsive workspace polish after the print workflow is stable.
 
 Potential **1.0** remains the stable complete CLI item-to-physical-card workflow with finalized front/back design and printing. Generic platform work may remain post-1.0.
 
-The 0.8.0 and 0.9.x items remain roadmap documentation and are not part of the 0.7.0 development build.
+The 0.9.x items remain roadmap documentation and are not part of the 0.8.0 development build.
 
 ## Implemented in Phase 4C core
 
@@ -90,9 +107,8 @@ Measure Card Forge resource use while the plugin is enabled and its view is not 
 
 ## Longer-term deferred work
 
-- Duplex printing and card backs.
 - Additional bounded presentation presets only after real physical-card testing.
-- Bounded artwork framing controls (Fit/Fill, zoom, position, or focal point) as a front-design follow-up. Framing changes the image **inside** the fixed planner-owned artwork box, should normally affect raster/visual identity only, and must not alter physical-plan geometry. Battleaxe-style portrait framing is a useful positive reference; the Wand of the Precocious Apprentice demonstrates why a larger box alone does not guarantee a larger perceived subject.
+- Seamless sheet backs and advanced named printer/copyshop calibration profiles.
 - Final responsive workspace polish after 0.9; preserve the accepted 0.6.1 responsive architecture until then.
 - Generic Markdown input and parser work.
 - A manual custom-card creator.
